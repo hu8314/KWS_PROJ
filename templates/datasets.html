@@ -1,0 +1,597 @@
+{% extends "base.html" %}
+
+{% block title %}数据集管理 - KWS测试工具{% endblock %}
+
+{% block content %}
+<div class="dataset-management-layout">
+    <aside class="dataset-side-nav" aria-label="数据集功能列表">
+        <button class="dataset-side-item active" type="button" data-panel="datasetListPanel">
+            <span class="side-icon">DATA</span>
+            <span>数据集列表</span>
+        </button>
+        <button class="dataset-side-item" type="button" data-panel="lowVolumePanel">
+            <span class="side-icon">LOW</span>
+            <span>音量最低音频</span>
+        </button>
+    </aside>
+
+    <section class="dataset-main-area">
+        <div class="dataset-feature-panel active" id="datasetListPanel">
+            <div class="page-header">
+                <h1><span class="title-icon">DS</span> 音频数据集管理</h1>
+                <button class="btn btn-primary" onclick="showUploadModal()">+ 上传新数据集</button>
+            </div>
+
+            {% if datasets %}
+            <div class="dataset-grid">
+                {% for ds in datasets %}
+                <div class="dataset-card" data-id="{{ ds.dataset_id }}">
+                    <div class="dataset-header">
+                        <h3 class="dataset-name">{{ ds.dataset_name }}</h3>
+                        <span class="dataset-time">{{ ds.create_time }}</span>
+                    </div>
+                    <div class="dataset-info">
+                        <div class="info-item">
+                            <span class="info-label">文件数量</span>
+                            <span class="info-value">{{ ds.total_files }} 个</span>
+                        </div>
+                        <div class="info-item">
+                            <span class="info-label">数据集ID</span>
+                            <span class="info-value" style="font-size:12px;">{{ ds.dataset_id }}</span>
+                        </div>
+                    </div>
+                    <div class="dataset-files-preview">
+                        <details>
+                            <summary>查看文件列表 ({{ ds.total_files }} 个)</summary>
+                            <ul class="file-preview-list">
+                                {% for f in ds.files %}
+                                <li>{{ f }}</li>
+                                {% endfor %}
+                            </ul>
+                        </details>
+                    </div>
+                    <div class="dataset-actions">
+                        <button class="btn btn-primary" onclick="openCreateTaskModal('{{ ds.dataset_id }}', '{{ ds.dataset_name }}')">
+                            🚀 创建任务
+                        </button>
+                        <button class="btn btn-danger" onclick="deleteDataset('{{ ds.dataset_id }}')">🗑 删除</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+            {% else %}
+            <div class="empty-state">
+                <div class="empty-icon">🗄️</div>
+                <h2>暂无数据集</h2>
+                <p>点击上方按钮上传新的音频数据集</p>
+            </div>
+            {% endif %}
+        </div>
+
+        <div class="dataset-feature-panel" id="lowVolumePanel">
+            <div class="volume-page-header">
+                <div>
+                    <h1><span class="title-icon">LV</span> 音量最低音频</h1>
+                    <p>筛查数据集中峰值最低的音频，支持单条试听和循环播放。</p>
+                </div>
+            </div>
+            <div class="volume-tool-card">
+                <div class="volume-tool-card-header">
+                    <div>
+                        <h2>分析设置</h2>
+                        <p>选择数据集后，按 Peak dBFS 从低到高排序。</p>
+                    </div>
+                    <span class="volume-metric-badge">Peak dBFS</span>
+                </div>
+                <div class="volume-tool-controls">
+                    <div class="form-group">
+                        <label>选择数据集</label>
+                        <select id="volumeDatasetSelect">
+                            <option value="">请选择数据集</option>
+                            {% for ds in datasets %}
+                            <option value="{{ ds.dataset_id }}">{{ ds.dataset_name }}（{{ ds.total_files }} 个）</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    <div class="form-group volume-limit-group">
+                        <label>显示数量</label>
+                        <input type="number" id="volumeLimit" value="20" min="1" max="200">
+                    </div>
+                    <button class="btn btn-primary" id="btnAnalyzeVolume" type="button">开始分析</button>
+                </div>
+                <div class="volume-result-status" id="volumeResultStatus">请选择数据集后开始分析。</div>
+                <div class="volume-results" id="volumeResults"></div>
+            </div>
+        </div>
+    </section>
+</div>
+
+<!-- 上传数据集弹窗 -->
+<div class="modal" id="uploadModal" style="display:none;">
+    <div class="modal-content upload-dataset-modal" style="max-width: 560px;">
+        <h3><span class="title-icon">UP</span> 上传音频数据集</h3>
+        <div class="form-group">
+            <label>数据集名称</label>
+            <input type="text" id="datasetName" placeholder="输入数据集名称">
+        </div>
+        <div class="drop-zone" id="dropZone">
+            <div class="drop-icon">📁</div>
+            <p>拖拽文件到此处，或 <span class="link">点击选择</span></p>
+            <p class="hint">支持 ZIP 压缩包 或 多个 WAV 文件</p>
+            <input type="file" id="fileInput" accept=".zip,.wav" multiple hidden>
+        </div>
+        <div class="file-list" id="fileList"></div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeUploadModal()">取消</button>
+            <button class="btn btn-primary" id="uploadBtn" disabled>确认上传</button>
+        </div>
+    </div>
+</div>
+
+<!-- 创建任务弹窗（选择环境） -->
+<div class="modal" id="createTaskModal" style="display:none;">
+    <div class="modal-content" style="max-width: 480px;">
+        <h3>🚀 基于数据集创建任务</h3>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px;">
+            数据集: <strong id="modalDatasetName"></strong>
+        </p>
+        <input type="hidden" id="modalDatasetId">
+        <div class="form-group">
+            <label>任务名称</label>
+            <input type="text" id="taskName" placeholder="自动生成为 数据集名_距离_角度_噪音">
+        </div>
+        <div class="form-group">
+            <label>任务类型</label>
+            <select id="taskType">
+                <option value="wake">唤醒</option>
+                <option value="voiceprint">声纹识别</option>
+            </select>
+        </div>
+        <div class="form-row" id="voiceprintCounts" style="display:none;">
+            <div class="form-group">
+                <label>库内条数</label>
+                <input type="number" id="voiceprintInCount" value="10" min="0">
+            </div>
+            <div class="form-group">
+                <label>库外条数</label>
+                <input type="number" id="voiceprintOutCount" value="10" min="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>音频间隔 (秒)</label>
+                <input type="number" id="silenceDuration" value="3" min="0" max="60">
+            </div>
+            <div class="form-group">
+                <label>采样率 (Hz)</label>
+                <input type="number" id="sampleRate" value="16000" min="8000" max="48000">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>位深 (bit)</label>
+                <input type="number" id="bitDepth" value="16" min="8" max="32">
+            </div>
+            <div class="form-group">
+                <label>声道数</label>
+                <input type="number" id="channels" value="1" min="1" max="2">
+            </div>
+        </div>
+        <h4 style="margin:16px 0 12px;font-size:14px;border-bottom:1px solid var(--border);padding-bottom:8px;">🌍 测试环境</h4>
+        <div class="form-row">
+            <div class="form-group">
+                <label>测试距离</label>
+                <div class="editable-select" data-options='{{ distances | tojson }}'>
+                    <input type="text" id="distance" value="3m" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle distance options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>测试角度</label>
+                <div class="editable-select" data-options='{{ angles | tojson }}'>
+                    <input type="text" id="angle" value="90°" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle angle options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>噪音等级</label>
+            <div class="editable-select" data-options='{{ noise_levels | tojson }}'>
+                <input type="text" id="noiseLevel" value="{{ noise_levels[0] }}" autocomplete="off">
+                <button type="button" class="editable-select-toggle" aria-label="Toggle noise level options">&#9662;</button>
+                <div class="editable-select-menu"></div>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeCreateTaskModal()">取消</button>
+            <button class="btn btn-primary" id="startCreateBtn">开始合成</button>
+        </div>
+    </div>
+</div>
+
+<!-- 进度条弹窗 -->
+<div class="modal" id="progressModal" style="display:none;">
+    <div class="modal-content" style="max-width: 400px; text-align:center;">
+        <h3>🔄 合成中...</h3>
+        <div class="progress-bar" style="margin-top:20px;">
+            <div class="progress-fill" id="progressFill" style="width:50%"></div>
+            <span class="progress-text" id="progressText">处理中...</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ===== 数据集功能侧栏 =====
+document.querySelectorAll('.dataset-side-item').forEach(item => {
+    item.addEventListener('click', () => {
+        const panelId = item.dataset.panel;
+        document.querySelectorAll('.dataset-side-item').forEach(nav => nav.classList.remove('active'));
+        document.querySelectorAll('.dataset-feature-panel').forEach(panel => panel.classList.remove('active'));
+        item.classList.add('active');
+        document.getElementById(panelId)?.classList.add('active');
+    });
+});
+
+// ===== 音量最低音频 =====
+const volumeDatasetSelect = document.getElementById('volumeDatasetSelect');
+const volumeLimit = document.getElementById('volumeLimit');
+const btnAnalyzeVolume = document.getElementById('btnAnalyzeVolume');
+const volumeResultStatus = document.getElementById('volumeResultStatus');
+const volumeResults = document.getElementById('volumeResults');
+const VOLUME_LOOP_DELAY_MS = 1500;
+const volumeLoopTimers = new WeakMap();
+
+function formatVolumeValue(value, suffix = '') {
+    if (value === null || value === undefined || Number.isNaN(Number(value))) return '-';
+    return `${Number(value).toFixed(2)}${suffix}`;
+}
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>'"]/g, char => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        "'": '&#39;',
+        '"': '&quot;'
+    }[char]));
+}
+
+function renderVolumeResults(datasetId, results) {
+    if (!results.length) {
+        volumeResults.innerHTML = '';
+        volumeResultStatus.textContent = '该数据集没有可分析的 WAV 文件。';
+        return;
+    }
+
+    const rows = results.map((item, index) => {
+        const safeFilename = escapeHtml(item.filename);
+        const audioUrl = `/api/datasets/${encodeURIComponent(datasetId)}/audio/${encodeURIComponent(item.filename)}`;
+        const errorText = item.error ? `<span class="volume-error">${escapeHtml(item.error)}</span>` : '';
+        const metricText = item.error
+            ? errorText
+            : `
+                <span><strong>Peak</strong>${formatVolumeValue(item.peak_dbfs, ' dBFS')}</span>
+                <span><strong>RMS</strong>${formatVolumeValue(item.dbfs, ' dBFS')}</span>
+                <span><strong>时长</strong>${formatVolumeValue(item.duration, 's')}</span>
+                <span><strong>采样率</strong>${item.sample_rate || '-'}Hz</span>
+            `;
+        return `
+            <div class="volume-result-item">
+                <div class="volume-rank">${index + 1}</div>
+                <div class="volume-file-info">
+                    <div class="volume-file-name" title="${safeFilename}">${safeFilename}</div>
+                    <div class="volume-file-meta">${metricText}</div>
+                </div>
+                <div class="volume-playback">
+                    <audio class="volume-audio" controls preload="none" src="${audioUrl}"></audio>
+                    <button class="volume-loop-btn" type="button" data-loop="off" aria-label="循环播放" title="循环播放">
+                        <svg class="volume-loop-icon" viewBox="0 0 24 24" aria-hidden="true">
+                            <path d="M17 2l4 4-4 4"></path>
+                            <path d="M3 11V9a3 3 0 0 1 3-3h15"></path>
+                            <path d="M7 22l-4-4 4-4"></path>
+                            <path d="M21 13v2a3 3 0 0 1-3 3H3"></path>
+                        </svg>
+                    </button>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    volumeResultStatus.textContent = `分析完成，共显示 ${results.length} 条音量最低音频。`;
+    volumeResults.innerHTML = rows;
+}
+
+function clearVolumeLoopTimer(audio) {
+    const timer = volumeLoopTimers.get(audio);
+    if (timer) {
+        clearTimeout(timer);
+        volumeLoopTimers.delete(audio);
+    }
+}
+
+function setVolumeLoopState(button, enabled) {
+    if (!button) return;
+    button.dataset.loop = enabled ? 'on' : 'off';
+    button.classList.toggle('active', enabled);
+    button.setAttribute('aria-label', enabled ? '关闭循环播放' : '循环播放');
+    button.title = enabled ? '关闭循环播放' : '循环播放';
+}
+
+function disableVolumeLoopForAudio(audio) {
+    if (!audio) return;
+    audio.loop = false;
+    clearVolumeLoopTimer(audio);
+    const item = audio.closest('.volume-result-item');
+    setVolumeLoopState(item?.querySelector('.volume-loop-btn'), false);
+}
+
+function pauseOtherVolumeAudio(currentAudio) {
+    document.querySelectorAll('.volume-audio').forEach(otherAudio => {
+        if (otherAudio === currentAudio) return;
+        otherAudio.pause();
+        disableVolumeLoopForAudio(otherAudio);
+    });
+}
+
+async function analyzeLowestVolume() {
+    const datasetId = volumeDatasetSelect.value;
+    const limit = Math.min(200, Math.max(1, Number(volumeLimit.value) || 20));
+    volumeLimit.value = limit;
+
+    if (!datasetId) {
+        volumeResultStatus.textContent = '请先选择数据集。';
+        volumeResults.innerHTML = '';
+        return;
+    }
+
+    btnAnalyzeVolume.disabled = true;
+    volumeResultStatus.textContent = '正在分析音量，请稍候...';
+    volumeResults.innerHTML = '';
+
+    try {
+        const res = await fetch(`/api/datasets/${encodeURIComponent(datasetId)}/lowest-volume?limit=${limit}`);
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            throw new Error(data.detail || '分析失败');
+        }
+        renderVolumeResults(datasetId, data.results || []);
+    } catch (e) {
+        volumeResultStatus.textContent = `分析失败：${e.message}`;
+    } finally {
+        btnAnalyzeVolume.disabled = false;
+    }
+}
+
+btnAnalyzeVolume?.addEventListener('click', analyzeLowestVolume);
+
+volumeResults?.addEventListener('click', (event) => {
+    const button = event.target.closest('.volume-loop-btn');
+    if (!button) return;
+    const item = button.closest('.volume-result-item');
+    const audio = item?.querySelector('.volume-audio');
+    if (!audio) return;
+
+    const enabled = button.dataset.loop !== 'on';
+    audio.loop = false;
+    clearVolumeLoopTimer(audio);
+    setVolumeLoopState(button, enabled);
+    if (enabled) {
+        pauseOtherVolumeAudio(audio);
+        audio.play().catch(e => {
+            volumeResultStatus.textContent = `播放失败：${e.message}`;
+        });
+    }
+});
+
+volumeResults?.addEventListener('play', (event) => {
+    const audio = event.target.closest?.('.volume-audio');
+    if (!audio) return;
+    clearVolumeLoopTimer(audio);
+    pauseOtherVolumeAudio(audio);
+}, true);
+
+volumeResults?.addEventListener('pause', (event) => {
+    const audio = event.target.closest?.('.volume-audio');
+    if (!audio || audio.ended) return;
+    clearVolumeLoopTimer(audio);
+}, true);
+
+volumeResults?.addEventListener('ended', (event) => {
+    const audio = event.target.closest?.('.volume-audio');
+    if (!audio) return;
+    clearVolumeLoopTimer(audio);
+
+    const item = audio.closest('.volume-result-item');
+    const button = item?.querySelector('.volume-loop-btn');
+    if (!button || button.dataset.loop !== 'on') return;
+
+    const timer = setTimeout(() => {
+        if (!audio.isConnected || button.dataset.loop !== 'on') return;
+        audio.currentTime = 0;
+        audio.play().catch(e => {
+            setVolumeLoopState(button, false);
+            volumeResultStatus.textContent = `播放失败：${e.message}`;
+        });
+    }, VOLUME_LOOP_DELAY_MS);
+    volumeLoopTimers.set(audio, timer);
+}, true);
+
+// ===== 上传弹窗 =====
+const uploadModal = document.getElementById('uploadModal');
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const uploadBtn = document.getElementById('uploadBtn');
+let selectedFiles = [];
+
+function showUploadModal() {
+    uploadModal.style.display = 'flex';
+    selectedFiles = [];
+    fileList.innerHTML = '';
+    uploadBtn.disabled = true;
+    document.getElementById('datasetName').value = '';
+}
+
+function closeUploadModal() {
+    uploadModal.style.display = 'none';
+}
+
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => handleFiles(e.target.files));
+dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+    selectedFiles = Array.from(files);
+    updateFileList();
+}
+
+function updateFileList() {
+    if (selectedFiles.length === 0) {
+        fileList.innerHTML = '';
+        uploadBtn.disabled = true;
+        return;
+    }
+    let html = '<h4>已选择文件</h4><ul>';
+    selectedFiles.forEach(f => {
+        const icon = f.name.toLowerCase().endsWith('.zip') ? 'ZIP' : 'WAV';
+        html += `<li>${icon} ${f.name} <small>(${(f.size/1024/1024).toFixed(2)} MB)</small></li>`;
+    });
+    html += '</ul>';
+    fileList.innerHTML = html;
+    uploadBtn.disabled = false;
+}
+
+uploadBtn.addEventListener('click', async () => {
+    if (selectedFiles.length === 0) return;
+    uploadBtn.disabled = true;
+    
+    const formData = new FormData();
+    selectedFiles.forEach(f => formData.append('files', f));
+    formData.append('dataset_name', document.getElementById('datasetName').value || `数据集_${new Date().toLocaleString()}`);
+    
+    try {
+        const res = await fetch('/api/datasets', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('上传失败: ' + (data.detail || '未知错误'));
+            uploadBtn.disabled = false;
+        }
+    } catch (e) {
+        alert('上传失败: ' + e.message);
+        uploadBtn.disabled = false;
+    }
+});
+
+// ===== 创建任务弹窗 =====
+const createTaskModal = document.getElementById('createTaskModal');
+const progressModal = document.getElementById('progressModal');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const taskTypeSelect = document.getElementById('taskType');
+const voiceprintCounts = document.getElementById('voiceprintCounts');
+
+function updateVoiceprintCountVisibility() {
+    voiceprintCounts.style.display = taskTypeSelect.value === 'voiceprint' ? 'flex' : 'none';
+}
+
+taskTypeSelect.addEventListener('change', updateVoiceprintCountVisibility);
+updateVoiceprintCountVisibility();
+
+function openCreateTaskModal(datasetId, datasetName) {
+    document.getElementById('modalDatasetId').value = datasetId;
+    document.getElementById('modalDatasetName').textContent = datasetName;
+    document.getElementById('taskName').value = '';
+    updateVoiceprintCountVisibility();
+    createTaskModal.style.display = 'flex';
+}
+
+function closeCreateTaskModal() {
+    createTaskModal.style.display = 'none';
+}
+
+document.getElementById('startCreateBtn').addEventListener('click', async () => {
+    const datasetId = document.getElementById('modalDatasetId').value;
+    const taskName = document.getElementById('taskName').value;
+    
+    createTaskModal.style.display = 'none';
+    progressModal.style.display = 'flex';
+    progressFill.style.width = '50%';
+    progressText.textContent = '合成中...';
+    
+    const formData = new FormData();
+    formData.append('dataset_id', datasetId);
+    formData.append('task_name', taskName);
+    formData.append('task_type', taskTypeSelect.value);
+    formData.append('voiceprint_in_count', document.getElementById('voiceprintInCount').value);
+    formData.append('voiceprint_out_count', document.getElementById('voiceprintOutCount').value);
+    formData.append('silence_duration', document.getElementById('silenceDuration').value);
+    formData.append('sample_rate', document.getElementById('sampleRate').value);
+    formData.append('bit_depth', document.getElementById('bitDepth').value);
+    formData.append('channels', document.getElementById('channels').value);
+    formData.append('distance', document.getElementById('distance').value);
+    formData.append('angle', document.getElementById('angle').value);
+    formData.append('noise_level', document.getElementById('noiseLevel').value);
+    
+    try {
+        const res = await fetch('/api/tasks/from-dataset', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        if (data.success) {
+            progressFill.style.width = '100%';
+            progressText.textContent = '完成!';
+            setTimeout(() => {
+                if (window.AudioLabCurrentTask) {
+                    window.AudioLabCurrentTask.set({
+                        taskId: data.task_id,
+                        taskName: data.task ? data.task.task_name : taskName,
+                        url: `/player/${data.task_id}`,
+                        updatedAt: Date.now()
+                    });
+                    window.open(`/player/${data.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
+                } else {
+                    window.location.href = `/player/${data.task_id}`;
+                }
+            }, 500);
+        } else {
+            alert('合成失败: ' + (data.detail || '未知错误'));
+            progressModal.style.display = 'none';
+        }
+    } catch (e) {
+        alert('合成失败: ' + e.message);
+        progressModal.style.display = 'none';
+    }
+});
+
+// ===== 删除数据集 =====
+async function deleteDataset(datasetId) {
+    if (!confirm('确定要删除该数据集吗？此操作不可恢复。')) return;
+    try {
+        const res = await fetch(`/api/datasets/${datasetId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('删除失败');
+        }
+    } catch (e) {
+        alert('删除失败: ' + e.message);
+    }
+}
+
+// 点击弹窗背景关闭
+uploadModal.addEventListener('click', (e) => { if (e.target === uploadModal) closeUploadModal(); });
+createTaskModal.addEventListener('click', (e) => { if (e.target === createTaskModal) closeCreateTaskModal(); });
+</script>
+{% endblock %}

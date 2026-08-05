@@ -1,0 +1,383 @@
+{% extends "base.html" %}
+
+{% block title %}任务管理 - KWS测试工具{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>📋 任务管理</h1>
+    <a href="/upload" class="btn btn-primary">+ 新建合成任务</a>
+</div>
+
+{% if tasks %}
+<div class="task-grid">
+    {% for task in tasks %}
+    <div class="task-card" data-task-id="{{ task.task_id }}">
+        <div class="task-header">
+            <h3 class="task-name" data-task-id="{{ task.task_id }}" title="Double-click to rename">{{ task.task_name }}</h3>
+            <span class="task-time">{{ task.create_time }}</span>
+        </div>
+        <div class="task-info">
+            <div class="info-item">
+                <span class="info-label">文件数量</span>
+                <span class="info-value">{{ task.total_files }} 个</span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">总时长</span>
+                <span class="info-value">{{ "%.1f"|format(task.total_duration) }} 秒</span>
+            </div>
+            {% if task.task_type|default('wake') == 'voiceprint' %}
+            <div class="info-item">
+                <span class="info-label">拒真数</span>
+                <span class="info-value badge {% if task.fn_count > 0 %}badge-warning{% else %}badge-success{% endif %}">
+                    {{ task.fn_count }} 个
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">认假数</span>
+                <span class="info-value badge {% if task.fp_count > 0 %}badge-danger{% else %}badge-success{% endif %}">
+                    {{ task.fp_count }} 个
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">FRR</span>
+                <span class="info-value badge {% if task.frr < 0.1 %}badge-success{% elif task.frr < 0.3 %}badge-warning{% else %}badge-danger{% endif %}">
+                    {{ "%.2f"|format(task.frr * 100) }}%
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">FAR</span>
+                <span class="info-value badge {% if task.far < 0.1 %}badge-success{% elif task.far < 0.3 %}badge-warning{% else %}badge-danger{% endif %}">
+                    {{ "%.2f"|format(task.far * 100) }}%
+                </span>
+            </div>
+            {% else %}
+            <div class="info-item">
+                <span class="info-label">Badcase</span>
+                <span class="info-value badge {% if task.badcase_count > 0 %}badge-warning{% else %}badge-success{% endif %}">
+                    {{ task.badcase_count }} 个
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">唤醒成功</span>
+                <span class="info-value badge {% if task.wake_count > 0 %}badge-success{% else %}badge-warning{% endif %}">
+                    {{ task.wake_count }} 个
+                </span>
+            </div>
+            <div class="info-item">
+                <span class="info-label">唤醒率</span>
+                <span class="info-value badge {% if task.wake_rate >= 0.9 %}badge-success{% elif task.wake_rate >= 0.7 %}badge-warning{% else %}badge-danger{% endif %}">
+                    {{ "%.2f"|format(task.wake_rate * 100) }}%
+                </span>
+            </div>
+            {% endif %}
+        </div>
+        <div class="task-env">
+            <span class="env-tag">📏 {{ task.environment.distance }}</span>
+            <span class="env-tag">🧭 {{ task.environment.angle }}</span>
+            <span class="env-tag">🔇 {{ task.environment.noise_level }}</span>
+        </div>
+        <div class="task-actions-grid">
+            <a href="/player/{{ task.task_id }}" class="btn btn-primary btn-compact">▶ 播放</a>
+            <button class="btn btn-compact" onclick="exportTaskReport('{{ task.task_id }}')">📄 导出</button>
+            {% if task.source_dataset_id %}
+            <button class="btn btn-warning btn-compact" onclick="reuseDataset('{{ task.source_dataset_id }}', '{{ task.task_name }}')">♻️ 复用</button>
+            {% else %}
+            <span class="btn-compact-placeholder"></span>
+            {% endif %}
+            <button class="btn btn-danger btn-compact" onclick="deleteTask('{{ task.task_id }}')">🗑 删除</button>
+        </div>
+    </div>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📂</div>
+    <h2>暂无任务</h2>
+    <p>点击上方按钮创建新的合成任务</p>
+</div>
+{% endif %}
+
+<!-- 复用数据集弹窗 -->
+<div class="modal" id="reuseModal" style="display:none;">
+    <div class="modal-content" style="max-width: 480px;">
+        <h3>♻️ 复用数据集创建新任务</h3>
+        <p style="color:var(--text-muted);font-size:13px;margin-bottom:16px;">
+            基于同一组音频，更换测试环境快速创建新任务
+        </p>
+        <input type="hidden" id="reuseDatasetId">
+        <div class="form-group">
+            <label>任务名称</label>
+            <input type="text" id="reuseTaskName" placeholder="输入任务名称">
+        </div>
+        <div class="form-group">
+            <label>任务类型</label>
+            <select id="reuseTaskType">
+                <option value="wake">唤醒</option>
+                <option value="voiceprint">声纹识别</option>
+            </select>
+        </div>
+        <div class="form-row" id="reuseVoiceprintCounts" style="display:none;">
+            <div class="form-group">
+                <label>库内条数</label>
+                <input type="number" id="reuseVoiceprintInCount" value="10" min="0">
+            </div>
+            <div class="form-group">
+                <label>库外条数</label>
+                <input type="number" id="reuseVoiceprintOutCount" value="10" min="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>音频间隔 (秒)</label>
+                <input type="number" id="reuseSilenceDuration" value="3" min="0" max="60">
+            </div>
+            <div class="form-group">
+                <label>采样率 (Hz)</label>
+                <input type="number" id="reuseSampleRate" value="16000" min="8000" max="48000">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>位深 (bit)</label>
+                <input type="number" id="reuseBitDepth" value="16" min="8" max="32">
+            </div>
+            <div class="form-group">
+                <label>声道数</label>
+                <input type="number" id="reuseChannels" value="1" min="1" max="2">
+            </div>
+        </div>
+        <h4 style="margin:16px 0 12px;font-size:14px;border-bottom:1px solid var(--border);padding-bottom:8px;">🌍 测试环境</h4>
+        <div class="form-row">
+            <div class="form-group">
+                <label>测试距离</label>
+                <div class="editable-select" data-options='{{ distances | tojson }}'>
+                    <input type="text" id="reuseDistance" value="3m" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle distance options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>测试角度</label>
+                <div class="editable-select" data-options='{{ angles | tojson }}'>
+                    <input type="text" id="reuseAngle" value="90°" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle angle options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>噪音等级</label>
+            <div class="editable-select" data-options='{{ noise_levels | tojson }}'>
+                <input type="text" id="reuseNoiseLevel" value="{{ noise_levels[0] }}" autocomplete="off">
+                <button type="button" class="editable-select-toggle" aria-label="Toggle noise level options">&#9662;</button>
+                <div class="editable-select-menu"></div>
+            </div>
+        </div>
+        <div class="modal-actions">
+            <button class="btn" onclick="closeReuseModal()">取消</button>
+            <button class="btn btn-primary" id="reuseStartBtn">开始合成</button>
+        </div>
+    </div>
+</div>
+
+<!-- 进度条弹窗 -->
+<div class="modal" id="progressModal" style="display:none;">
+    <div class="modal-content" style="max-width: 400px; text-align:center;">
+        <h3>🔄 合成中...</h3>
+        <div class="progress-bar" style="margin-top:20px;">
+            <div class="progress-fill" id="progressFill" style="width:50%"></div>
+            <span class="progress-text" id="progressText">处理中...</span>
+        </div>
+    </div>
+</div>
+
+<script>
+async function exportTaskReport(taskId) {
+    try {
+        const res = await fetch(`/api/tasks/${taskId}/export`);
+        if (!res.ok) {
+            alert('导出失败');
+            return;
+        }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const disposition = res.headers.get('content-disposition');
+        let filename = '测试报告.csv';
+        if (disposition && disposition.includes('filename=')) {
+            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match) filename = decodeURIComponent(match[1].replace(/['"]/g, ''));
+        }
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('导出失败: ' + e.message);
+    }
+}
+
+async function deleteTask(taskId) {
+    if (!confirm('确定要删除该任务吗？此操作不可恢复。')) return;
+    try {
+        const res = await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            location.reload();
+        } else {
+            alert('删除失败');
+        }
+    } catch (e) {
+        alert('删除失败: ' + e.message);
+    }
+}
+
+
+function enableTaskNameEditing(titleEl) {
+    if (!titleEl || titleEl.dataset.editing === 'true') return;
+
+    const taskId = titleEl.dataset.taskId;
+    const originalName = titleEl.textContent.trim();
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'task-name-editor';
+    input.value = originalName;
+    titleEl.dataset.editing = 'true';
+    titleEl.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let finished = false;
+
+    const restoreTitle = (name) => {
+        const nextTitle = document.createElement('h3');
+        nextTitle.className = 'task-name';
+        nextTitle.dataset.taskId = taskId;
+        nextTitle.title = 'Double-click to rename';
+        nextTitle.textContent = name;
+        nextTitle.addEventListener('dblclick', () => enableTaskNameEditing(nextTitle));
+        input.replaceWith(nextTitle);
+    };
+
+    const saveName = async () => {
+        if (finished) return;
+        finished = true;
+        const nextName = input.value.trim();
+        if (!nextName || nextName === originalName) {
+            restoreTitle(originalName);
+            return;
+        }
+        input.disabled = true;
+        try {
+            const res = await fetch(`/api/tasks/${taskId}/name`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ task_name: nextName })
+            });
+            const data = await res.json();
+            if (!res.ok || !data.success) throw new Error(data.detail || '????');
+            restoreTitle(data.task_name || nextName);
+        } catch (e) {
+            alert('????: ' + e.message);
+            restoreTitle(originalName);
+        }
+    };
+
+    input.addEventListener('blur', saveName);
+    input.addEventListener('keydown', (e) => {
+        if (e.key === 'Enter') input.blur();
+        if (e.key === 'Escape') {
+            finished = true;
+            restoreTitle(originalName);
+        }
+    });
+}
+
+document.querySelectorAll('.task-name').forEach(titleEl => {
+    titleEl.addEventListener('dblclick', () => enableTaskNameEditing(titleEl));
+});
+
+// ===== 复用数据集 =====
+const reuseModal = document.getElementById('reuseModal');
+const progressModal = document.getElementById('progressModal');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const reuseTaskTypeSelect = document.getElementById('reuseTaskType');
+const reuseVoiceprintCounts = document.getElementById('reuseVoiceprintCounts');
+
+function updateReuseVoiceprintCountVisibility() {
+    reuseVoiceprintCounts.style.display = reuseTaskTypeSelect.value === 'voiceprint' ? 'flex' : 'none';
+}
+
+reuseTaskTypeSelect.addEventListener('change', updateReuseVoiceprintCountVisibility);
+updateReuseVoiceprintCountVisibility();
+
+function reuseDataset(datasetId, taskName) {
+    document.getElementById('reuseDatasetId').value = datasetId;
+    document.getElementById('reuseTaskName').value = '';
+    updateReuseVoiceprintCountVisibility();
+    reuseModal.style.display = 'flex';
+}
+
+function closeReuseModal() {
+    reuseModal.style.display = 'none';
+}
+
+document.getElementById('reuseStartBtn').addEventListener('click', async () => {
+    const datasetId = document.getElementById('reuseDatasetId').value;
+    const taskName = document.getElementById('reuseTaskName').value;
+    
+    reuseModal.style.display = 'none';
+    progressModal.style.display = 'flex';
+    progressFill.style.width = '50%';
+    progressText.textContent = '合成中...';
+    
+    const formData = new FormData();
+    formData.append('dataset_id', datasetId);
+    formData.append('task_name', taskName);
+    formData.append('task_type', reuseTaskTypeSelect.value);
+    formData.append('voiceprint_in_count', document.getElementById('reuseVoiceprintInCount').value);
+    formData.append('voiceprint_out_count', document.getElementById('reuseVoiceprintOutCount').value);
+    formData.append('silence_duration', document.getElementById('reuseSilenceDuration').value);
+    formData.append('sample_rate', document.getElementById('reuseSampleRate').value);
+    formData.append('bit_depth', document.getElementById('reuseBitDepth').value);
+    formData.append('channels', document.getElementById('reuseChannels').value);
+    formData.append('distance', document.getElementById('reuseDistance').value);
+    formData.append('angle', document.getElementById('reuseAngle').value);
+    formData.append('noise_level', document.getElementById('reuseNoiseLevel').value);
+    
+    try {
+        const res = await fetch('/api/tasks/from-dataset', { method: 'POST', body: formData });
+        const data = await res.json();
+        
+        if (data.success) {
+            progressFill.style.width = '100%';
+            progressText.textContent = '完成!';
+            setTimeout(() => {
+                if (window.AudioLabCurrentTask) {
+                    window.AudioLabCurrentTask.set({
+                        taskId: data.task_id,
+                        taskName: data.task ? data.task.task_name : taskName,
+                        url: `/player/${data.task_id}`,
+                        updatedAt: Date.now()
+                    });
+                    window.open(`/player/${data.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
+                } else {
+                    window.location.href = `/player/${data.task_id}`;
+                }
+            }, 500);
+        } else {
+            alert('合成失败: ' + (data.detail || '未知错误'));
+            progressModal.style.display = 'none';
+        }
+    } catch (e) {
+        alert('合成失败: ' + e.message);
+        progressModal.style.display = 'none';
+    }
+});
+
+reuseModal.addEventListener('click', (e) => { if (e.target === reuseModal) closeReuseModal(); });
+</script>
+{% endblock %}

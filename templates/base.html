@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}KWS关键词唤醒测试工具{% endblock %}</title>
+    <link rel="stylesheet" href="/static/css/style.css?v=current-task-empty-1">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    <nav class="navbar">
+        <div class="nav-brand">
+            <span class="logo">AL</span>
+            <span class="brand-text">AudioLab</span>
+        </div>
+        <ul class="nav-menu">
+            <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">任务管理</a></li>
+            <li><a href="/datasets" class="{% if request.url.path == '/datasets' %}active{% endif %}">数据集管理</a></li>
+            <li><a href="/upload" class="{% if request.url.path == '/upload' %}active{% endif %}">创建任务</a></li>
+            <li id="navCurrentTaskItem" hidden><a href="#" id="navCurrentTask">当前任务</a></li>
+            <li><a href="/badcases" class="{% if request.url.path == '/badcases' %}active{% endif %}">Badcase管理</a></li>
+        </ul>
+    </nav>
+
+    <main class="main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <script>
+    (function() {
+        const CURRENT_TASK_STORAGE_KEY = 'audiolab.currentTask';
+        const CURRENT_TASK_WINDOW_NAME = 'currentTaskWindow';
+        const MAIN_APP_WINDOW_NAME = 'mainAppWindow';
+        const currentTaskLink = document.getElementById('navCurrentTask');
+        const currentTaskItem = document.getElementById('navCurrentTaskItem');
+        const navLinks = Array.from(document.querySelectorAll('.nav-menu a')).filter(link => link.id !== 'navCurrentTask');
+        let currentTaskValidationToken = 0;
+
+        function readCurrentTask() {
+            try {
+                const raw = window.localStorage.getItem(CURRENT_TASK_STORAGE_KEY);
+                return raw ? JSON.parse(raw) : null;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function writeCurrentTask(task) {
+            try {
+                if (!task) {
+                    window.localStorage.removeItem(CURRENT_TASK_STORAGE_KEY);
+                    return;
+                }
+                window.localStorage.setItem(CURRENT_TASK_STORAGE_KEY, JSON.stringify(task));
+            } catch (e) {}
+        }
+
+        function focusOpenerCurrentTaskWindow() {
+            try {
+                if (!window.opener || window.opener.closed) return false;
+                if (window.opener.name !== CURRENT_TASK_WINDOW_NAME) return false;
+                window.opener.focus();
+                return true;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function isCurrentTaskAlive() {
+            const currentTask = readCurrentTask();
+            if (!currentTask || !currentTask.taskId) return false;
+
+            try {
+                const raw = window.localStorage.getItem('audiolab.currentTaskPing');
+                if (!raw) return false;
+                const payload = JSON.parse(raw);
+                if (!payload || payload.taskId !== currentTask.taskId) return false;
+                return Date.now() - Number(payload.updatedAt || 0) < 5000;
+            } catch (e) {
+                return false;
+            }
+        }
+
+        function requestFocusAliveCurrentTask() {
+            const currentTask = readCurrentTask();
+            if (!currentTask || !currentTask.taskId) return false;
+
+            try {
+                window.localStorage.setItem('audiolab.currentTaskFocus', JSON.stringify({
+                    taskId: currentTask.taskId,
+                    windowName: CURRENT_TASK_WINDOW_NAME,
+                    updatedAt: Date.now()
+                }));
+            } catch (e) {}
+
+            const targetWindow = window.open(currentTask.url, CURRENT_TASK_WINDOW_NAME);
+            if (targetWindow) {
+                try {
+                    targetWindow.focus();
+                } catch (e) {}
+                return true;
+            }
+            return false;
+        }
+
+        function hideCurrentTaskLink() {
+            if (!currentTaskLink) return;
+            if (currentTaskItem) currentTaskItem.hidden = true;
+            currentTaskLink.href = '#';
+            currentTaskLink.title = '目前没有任务';
+        }
+
+        function showCurrentTaskLink(currentTask) {
+            if (!currentTaskLink) return;
+            if (currentTaskItem) currentTaskItem.hidden = false;
+            currentTaskLink.href = currentTask.url;
+            currentTaskLink.title = currentTask.taskName ? `当前任务：${currentTask.taskName}` : '当前任务';
+        }
+
+        async function validateCurrentTask(currentTask) {
+            if (!currentTask || !currentTask.taskId || !currentTask.url) return false;
+            try {
+                const res = await fetch(`/api/tasks/${encodeURIComponent(currentTask.taskId)}`, { cache: 'no-store' });
+                if (res.ok) return true;
+                if (res.status === 404) writeCurrentTask(null);
+                return false;
+            } catch (e) {
+                return true;
+            }
+        }
+
+        async function syncCurrentTaskLink() {
+            const currentTask = readCurrentTask();
+            const validationToken = ++currentTaskValidationToken;
+            hideCurrentTaskLink();
+            if (!currentTask || !currentTask.url) return;
+
+            const isValid = await validateCurrentTask(currentTask);
+            if (validationToken !== currentTaskValidationToken) return;
+            if (isValid) {
+                showCurrentTaskLink(currentTask);
+            }
+        }
+
+        async function openCurrentTask() {
+            const currentTask = readCurrentTask();
+            if (!currentTask || !currentTask.url) {
+                alert('目前没有任务');
+                return;
+            }
+            const isValid = await validateCurrentTask(currentTask);
+            if (!isValid) {
+                hideCurrentTaskLink();
+                alert('目前没有任务');
+                return;
+            }
+            if (isCurrentTaskAlive()) {
+                requestFocusAliveCurrentTask();
+                return;
+            }
+            window.open(currentTask.url, CURRENT_TASK_WINDOW_NAME);
+        }
+
+        function openInMainWindow(url) {
+            const targetWindow = window.open(url, MAIN_APP_WINDOW_NAME);
+            if (targetWindow) {
+                targetWindow.focus();
+            } else {
+                window.location.href = url;
+            }
+        }
+
+        if (currentTaskLink) {
+            currentTaskLink.addEventListener('click', (e) => {
+                e.preventDefault();
+                openCurrentTask();
+            });
+        }
+
+        navLinks.forEach(link => {
+            link.addEventListener('click', (e) => {
+                if (window.name !== CURRENT_TASK_WINDOW_NAME) return;
+                e.preventDefault();
+                openInMainWindow(link.href);
+            });
+        });
+
+        window.AudioLabCurrentTask = {
+            storageKey: CURRENT_TASK_STORAGE_KEY,
+            windowName: CURRENT_TASK_WINDOW_NAME,
+            mainWindowName: MAIN_APP_WINDOW_NAME,
+            pingKey: 'audiolab.currentTaskPing',
+            focusKey: 'audiolab.currentTaskFocus',
+            get: readCurrentTask,
+            set: function(task) {
+                writeCurrentTask(task);
+                syncCurrentTaskLink();
+            },
+            clear: function() {
+                writeCurrentTask(null);
+                syncCurrentTaskLink();
+            },
+            sync: syncCurrentTaskLink,
+            open: openCurrentTask,
+            isAlive: isCurrentTaskAlive,
+            requestFocus: requestFocusAliveCurrentTask
+        };
+
+        window.addEventListener('storage', syncCurrentTaskLink);
+        syncCurrentTaskLink();
+    })();
+    </script>
+
+    <script src="/static/js/app.js?v=green-minimal-icons-2"></script>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>

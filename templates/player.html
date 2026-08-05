@@ -1,0 +1,1631 @@
+﻿{% extends "base.html" %}
+
+{% block title %}{{ task.task_name }} - 播放测试{% endblock %}
+
+{% block content %}
+<div class="player-page">
+    <div class="player-header">
+        <h1><span class="title-icon">PLAY</span> {{ task.task_name }}</h1>
+        <div class="env-tags">
+            <span class="env-tag">📏 {{ task.environment.distance }}</span>
+            <span class="env-tag">🧭 {{ task.environment.angle }}</span>
+            <span class="env-tag">🔇 {{ task.environment.noise_level }}</span>
+            <span class="env-tag">⏱ {{ task.total_files }}个文件</span>
+            <span class="env-tag">⏳ {{ "%.1f"|format(task.total_duration) }}秒</span>
+        </div>
+    </div>
+
+    <!-- 唤醒率统计面板 -->
+    <div class="stats-bar">
+        <div class="stat-item">
+            <span class="stat-label">总音频</span>
+            <span class="stat-value" id="statsTotalFiles">{{ task.total_files }}</span>
+        </div>
+        {% if task.task_type|default('wake') == 'voiceprint' %}
+        <div class="stat-item">
+            <span class="stat-label">拒真数</span>
+            <span class="stat-value" id="statsFnCount" style="color:var(--warning)">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">FRR</span>
+            <span class="stat-value stat-highlight" id="statsFrr">0.00%</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">认假数</span>
+            <span class="stat-value" id="statsFpCount" style="color:var(--danger)">0</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">FAR</span>
+            <span class="stat-value stat-highlight" id="statsFar">0.00%</span>
+        </div>
+        {% else %}
+        <div class="stat-item">
+            <span class="stat-label">Badcase</span>
+            <span class="stat-value" id="statsBadcaseCount" style="color:var(--warning)">{{ badcases|length }}</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">唤醒成功</span>
+            <span class="stat-value" id="statsSuccessCount" style="color:var(--success)">{{ task.total_files - badcases|length }}</span>
+        </div>
+        <div class="stat-item">
+            <span class="stat-label">唤醒率</span>
+            <span class="stat-value stat-highlight" id="statsSuccessRate">
+                {% if task.total_files > 0 %}
+                    {{ "%.2f"|format((task.total_files - badcases|length) / task.total_files * 100) }}%
+                {% else %}
+                    0.00%
+                {% endif %}
+            </span>
+        </div>
+        {% endif %}
+        <button class="btn btn-small" onclick="exportTaskReport('{{ task.task_id }}')">📄 导出报告</button>
+    </div>
+
+    <div class="player-layout">
+        <!-- 左侧：文件列表 -->
+        <div class="file-panel">
+            <h3>📁 音频文件列表</h3>
+            <div class="file-search">
+                <input type="text" id="fileSearch" placeholder="搜索文件名...">
+            </div>
+            <div class="file-list-scroll" id="fileList">
+                {% for ts in timestamps %}
+                <div class="file-item" data-index="{{ ts.index }}" data-start="{{ ts.start_time }}" data-end="{{ ts.end_time }}" data-filename="{{ ts.filename }}">
+                    <div class="file-index">{{ ts.index }}</div>
+                    <div class="file-info">
+                        <div class="file-name">{{ ts.filename }}</div>
+                        <div class="file-time">{{ "%.2f"|format(ts.start_time) }}s - {{ "%.2f"|format(ts.end_time) }}s</div>
+                    </div>
+                    <div class="file-badged" id="badge-{{ ts.index }}" style="display:none;">⚠️</div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+
+        <!-- 中间：SSH终端 + 播放器 -->
+        <div class="player-panel">
+            <!-- SSH终端区域 -->
+            <div class="ssh-section">
+                <div class="ssh-header">
+                    <div class="ssh-header-left">
+                        <span class="ssh-icon">🔌</span>
+                        <h3>设备终端</h3>
+                    </div>
+                    <span class="ssh-status" id="sshStatus">未连接</span>
+                </div>
+                <div class="ssh-connect-form" id="sshForm">
+                    <div class="ssh-form-grid">
+                        <div class="ssh-field">
+                            <label for="sshHost">主机地址</label>
+                            <input type="text" id="sshHost" placeholder="例如 192.168.1.100">
+                        </div>
+                        <div class="ssh-field">
+                            <label for="sshPort">端口</label>
+                            <input type="number" id="sshPort" placeholder="22" value="22">
+                        </div>
+                        <div class="ssh-field">
+                            <label for="sshUser">用户名</label>
+                            <input type="text" id="sshUser" placeholder="root">
+                        </div>
+                        <div class="ssh-field">
+                            <label for="sshPass">密码</label>
+                            <input type="password" id="sshPass" placeholder="输入密码">
+                        </div>
+                    </div>
+                    <div class="ssh-form-actions">
+                        <button class="btn btn-primary" id="btnSSHConnect" onclick="connectSSH()">
+                            <span>🔗 连接设备</span>
+                        </button>
+                    </div>
+                </div>
+                <div class="ssh-toolbar" id="sshToolbar" style="display:none;">
+                    <span class="ssh-host-tag" id="sshHostDisplay"></span>
+                    <div class="ssh-toolbar-divider"></div>
+                    <button class="btn btn-small ssh-cmd-btn" onclick="sendSSHCmd('dmesg | tail -n 50')">📋 内核日志</button>
+                    <button class="btn btn-small ssh-cmd-btn" onclick="sendSSHCmd('logread | tail -n 50')">📋 系统日志</button>
+                    <button class="btn btn-small ssh-cmd-btn" onclick="sendSSHCmd('ps | grep -i wake')">🔍 唤醒进程</button>
+                    <div class="ssh-toolbar-spacer"></div>
+                    <button class="btn btn-small" onclick="openTerminalModal()" title="放大终端">🔍</button>
+                    <button class="btn btn-small btn-danger" onclick="disconnectSSH()">🔌 断开</button>
+                </div>
+                <div class="ssh-terminal-wrap">
+                    <div class="ssh-terminal" id="sshTerminal"></div>
+                </div>
+                <div class="ssh-input-line" id="sshInputLine" style="display:none;">
+                    <span class="ssh-prompt">$</span>
+                    <input type="text" id="sshCommandInput" placeholder="输入命令按回车执行..." onkeydown="if(event.key==='Enter') sendSSHInput()">
+                    <button class="btn btn-small btn-primary" onclick="sendSSHInput()">⏎ 发送</button>
+                </div>
+            </div>
+
+            <div class="panel-resizer" id="sshPanelResizer" title="Drag to resize terminal"></div>
+
+            <audio id="audioPlayer" src="/api/tasks/{{ task.task_id }}/audio" preload="metadata"></audio>
+            
+            <div class="player-controls">
+                <button class="ctrl-btn icon-ctrl" id="btnPlay" type="button" aria-label="播放" title="播放" data-state="play">
+                    <svg class="ctrl-icon ctrl-icon-play" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M8 5v14l11-7z"></path>
+                    </svg>
+                    <svg class="ctrl-icon ctrl-icon-pause" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M7 5h4v14H7zM15 5h4v14h-4z"></path>
+                    </svg>
+                </button>
+                <button class="ctrl-btn icon-ctrl" id="btnStop" type="button" aria-label="归位" title="归位">
+                    <svg class="ctrl-icon ctrl-icon-reset" viewBox="0 0 24 24" aria-hidden="true">
+                        <path d="M6 7v5h5"></path>
+                        <path d="M7.2 12A6.5 6.5 0 1 0 9 7.5L6 10.5"></path>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="progress-container">
+                <span class="time-current" id="timeCurrent">0:00</span>
+                <div class="progress-track" id="progressTrack">
+                    <div class="progress-played" id="progressPlayed"></div>
+                    <div class="progress-handle" id="progressHandle"></div>
+                </div>
+                <span class="time-total" id="timeTotal">0:00</span>
+            </div>
+
+            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                <button class="btn btn-small" id="btnAutoLabel">开启自动标注</button>
+                <span id="autoLabelState">自动标注：关闭</span>
+                <span>已通过 <strong id="autoLabelPassedCount">0</strong>，自动标注 <strong id="autoLabelMarkedCount">0</strong></span>
+                <span id="autoLabelMessage" style="color:var(--text-muted);"></span>
+            </div>
+            {% if task.task_type|default('wake') == 'wake' %}
+            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff7ed;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                <button class="btn btn-small" id="btnRetestAll">总复测</button>
+                <span id="retestState">复测：未开始</span>
+                <button class="btn btn-small" id="btnRetestRestart">&#37325;&#26032;&#22797;&#27979;</button>
+                <span id="retestMessage" style="color:var(--text-muted);"></span>
+            </div>
+            {% endif %}
+
+            <div class="mark-section">
+                <div class="current-file" id="currentFile">
+                    <span class="label">当前音频:</span>
+                    <span class="name" id="currentFileName">-</span>
+                    <span class="time" id="currentFileTime">-</span>
+                </div>
+                <div class="mark-form">
+                    <textarea id="badcaseNote" placeholder="添加备注信息（可选）..." rows="2"></textarea>
+                    {% if task.task_type|default('wake') == 'voiceprint' %}
+                    <div class="voiceprint-mark-actions">
+                        <button class="btn btn-danger btn-block" data-error-type="FP">FP</button>
+                        <button class="btn btn-warning btn-block" data-error-type="FN">FN</button>
+                    </div>
+                    {% else %}
+                    <button class="btn btn-warning btn-block" id="btnMark">⚠️ 标记为Badcase</button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：badcase列表 -->
+        <div class="badcase-panel">
+            {% if task.task_type|default('wake') == 'voiceprint' %}
+            <h3>⚠️ 错误列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
+            {% else %}
+            <h3>⚠️ Badcase列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
+            {% endif %}
+            <div class="badcase-list-scroll" id="badcaseList">
+                {% for bc in badcases %}
+                <div class="badcase-item" data-id="{{ bc.id }}" data-start="{{ bc.start_time }}" data-filename="{{ bc.filename }}" data-error-type="{{ bc.error_type|default('') }}">
+                    <div class="badcase-header">
+                        <span class="badcase-id">#{{ bc.id }}{% if task.task_type|default('wake') == 'voiceprint' and bc.error_type %} · {{ bc.error_type }}{% endif %}</span>
+                        <span class="badcase-time">{{ bc.mark_time }}</span>
+                    </div>
+                    <div class="badcase-file">
+                        {% set matched_ts = timestamps | selectattr('filename', 'equalto', bc.filename) | first %}
+                        {% if matched_ts %}{{ matched_ts.index }}. {% endif %}{{ bc.filename }}
+                    </div>
+                    <div class="badcase-range">{{ "%.2f"|format(bc.start_time) }}s - {{ "%.2f"|format(bc.end_time) }}s</div>
+                    {% if bc.note %}
+                    <div class="badcase-note">{{ bc.note }}</div>
+                    {% endif %}
+                    <div class="badcase-actions">
+                        <button class="btn btn-small" onclick="jumpToTime({{ bc.start_time }})">跳转</button>
+                        <button class="btn btn-small btn-danger" onclick="deleteBadcase({{ bc.id }})">删除</button>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- 终端放大Modal -->
+<div class="modal" id="terminalModal" style="display:none;">
+    <div class="modal-content terminal-modal-content">
+        <div class="terminal-modal-header">
+            <h3>🔍 SSH 终端日志</h3>
+            <button class="btn btn-small" onclick="closeTerminalModal()">✕ 关闭</button>
+        </div>
+        <div class="terminal-modal-body">
+            <div class="ssh-terminal-modal" id="sshTerminalModal"></div>
+        </div>
+        <div class="terminal-modal-footer" id="terminalModalFooter" style="display:none;">
+            <span class="ssh-prompt">$</span>
+            <input type="text" id="sshCommandInputModal" placeholder="输入命令按回车执行..." onkeydown="if(event.key==='Enter') sendSSHInputModal()">
+            <button class="btn btn-small btn-primary" onclick="sendSSHInputModal()">⏎ 发送</button>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+// ========== 数据 ==========
+async function exportTaskReport(taskId) {
+    try {
+        const res = await fetch(`/api/tasks/${taskId}/export`);
+        if (!res.ok) { alert('导出失败'); return; }
+        const blob = await res.blob();
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const disposition = res.headers.get('content-disposition');
+        let filename = '测试报告.csv';
+        if (disposition && disposition.includes('filename=')) {
+            const match = disposition.match(/filename[^;=\n]*=((['"]).*?\2|[^;\n]*)/);
+            if (match) filename = decodeURIComponent(match[1].replace(/['"]/g, ''));
+        }
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        window.URL.revokeObjectURL(url);
+    } catch (e) {
+        alert('导出失败: ' + e.message);
+    }
+}
+
+const taskId = '{{ task.task_id }}';
+const taskName = {{ task.task_name | tojson }};
+const taskType = '{{ task.task_type|default("wake") }}';
+const taskSilenceDuration = Number({{ task.silence_duration|default(0)|tojson }}) || 0;
+const timestamps = {{ timestamps | tojson }};
+const initialBadcases = {{ badcases | tojson }};
+const CURRENT_TASK_WINDOW_NAME = (window.AudioLabCurrentTask && window.AudioLabCurrentTask.windowName) || 'currentTaskWindow';
+const CURRENT_TASK_PING_KEY = (window.AudioLabCurrentTask && window.AudioLabCurrentTask.pingKey) || 'audiolab.currentTaskPing';
+const CURRENT_TASK_FOCUS_KEY = (window.AudioLabCurrentTask && window.AudioLabCurrentTask.focusKey) || 'audiolab.currentTaskFocus';
+const voiceprintInCount = Math.max(0, Number({{ task.voiceprint_in_count|default(0)|tojson }}) || 0);
+
+// ========== DOM元素 ==========
+const audio = document.getElementById('audioPlayer');
+const playerPanel = document.querySelector('.player-panel');
+const sshSection = document.querySelector('.ssh-section');
+const sshPanelResizer = document.getElementById('sshPanelResizer');
+const btnPlay = document.getElementById('btnPlay');
+const btnStop = document.getElementById('btnStop');
+const progressTrack = document.getElementById('progressTrack');
+const progressPlayed = document.getElementById('progressPlayed');
+const progressHandle = document.getElementById('progressHandle');
+const timeCurrent = document.getElementById('timeCurrent');
+const timeTotal = document.getElementById('timeTotal');
+const fileList = document.getElementById('fileList');
+const fileItems = fileList.querySelectorAll('.file-item');
+const currentFileName = document.getElementById('currentFileName');
+const currentFileTime = document.getElementById('currentFileTime');
+const btnMark = document.getElementById('btnMark');
+const voiceprintMarkButtons = document.querySelectorAll('.voiceprint-mark-actions button');
+const badcaseNote = document.getElementById('badcaseNote');
+const badcaseList = document.getElementById('badcaseList');
+const badcaseCount = document.getElementById('badcaseCount');
+const statsTotalFilesEl = document.getElementById('statsTotalFiles');
+const statsBadcaseCountEl = document.getElementById('statsBadcaseCount');
+const statsSuccessCountEl = document.getElementById('statsSuccessCount');
+const statsSuccessRateEl = document.getElementById('statsSuccessRate');
+const statsFnCountEl = document.getElementById('statsFnCount');
+const statsFpCountEl = document.getElementById('statsFpCount');
+const statsFrrEl = document.getElementById('statsFrr');
+const statsFarEl = document.getElementById('statsFar');
+const fileSearch = document.getElementById('fileSearch');
+const btnAutoLabel = document.getElementById('btnAutoLabel');
+const autoLabelState = document.getElementById('autoLabelState');
+const autoLabelPassedCountEl = document.getElementById('autoLabelPassedCount');
+const autoLabelMarkedCountEl = document.getElementById('autoLabelMarkedCount');
+const autoLabelMessage = document.getElementById('autoLabelMessage');
+const btnRetestAll = document.getElementById('btnRetestAll');
+const btnRetestRestart = document.getElementById('btnRetestRestart');
+const retestState = document.getElementById('retestState');
+const retestMessage = document.getElementById('retestMessage');
+
+let isPlaying = false;
+let currentIndex = -1;
+let currentTaskRedirecting = false;
+
+function setPlayButtonState(playing) {
+    btnPlay.dataset.state = playing ? 'pause' : 'play';
+    btnPlay.setAttribute('aria-label', playing ? '暂停' : '播放');
+    btnPlay.title = playing ? '暂停' : '播放';
+}
+
+function initSshPanelResize() {
+    if (!playerPanel || !sshSection || !sshPanelResizer) return;
+
+    let resizing = false;
+
+    const clampHeight = (height) => {
+        const panelHeight = playerPanel.getBoundingClientRect().height;
+        const minHeight = 180;
+        const maxHeight = Math.max(minHeight, panelHeight - 430);
+        return Math.min(Math.max(height, minHeight), maxHeight);
+    };
+
+    const setSshHeight = (height) => {
+        const nextHeight = clampHeight(height);
+        sshSection.style.flex = `0 0 ${nextHeight}px`;
+        sshSection.style.maxHeight = 'none';
+    };
+
+    sshPanelResizer.addEventListener('mousedown', (event) => {
+        event.preventDefault();
+        resizing = true;
+        document.body.classList.add('is-resizing-panel');
+    });
+
+    window.addEventListener('mousemove', (event) => {
+        if (!resizing) return;
+        const panelTop = playerPanel.getBoundingClientRect().top;
+        setSshHeight(event.clientY - panelTop);
+    });
+
+    window.addEventListener('mouseup', () => {
+        if (!resizing) return;
+        resizing = false;
+        document.body.classList.remove('is-resizing-panel');
+    });
+}
+
+initSshPanelResize();
+
+// ========== 自动标注状态 ==========
+const WAKE_KEYWORDS = [
+    '小 优',
+    '嘿 小 优',
+    '嗨 小 优',
+    '嘿，小 优',
+    '嗨，小 优',
+    'Uliya',
+    'Hi Uliya',
+    'Hey Uliya',
+    'Hi, Uliya',
+    'Hey, Uliya'
+];
+const AUTO_LABEL_NO_LOG_NOTE = '自动标注：未识别到，播放片段及间隔时间内没有出现新日志';
+const AUTO_LABEL_NO_KEYWORD_NOTE_PREFIX = '自动标注：未识别到关键词，出现的新日志：';
+const VOICEPRINT_EXPECTED_NUMBER_RE = /^(\d{2})/;
+const VOICEPRINT_SPEAKER_FIELD_RE = /speaker:\s*([^)"]+)/i;
+const VOICEPRINT_NUMBER_RE = /(\d{2})$/;
+const RETEST_REPEAT_COUNT = 3;
+const RETEST_INTERVAL_OFFSET_SEC = 0.8;
+
+let autoLabelEnabled = false;
+let autoLabelPassed = new Set();
+let autoLabelMarked = new Set();
+let autoLabelMarking = new Set();
+let autoLabelWindows = new Map();
+let autoLabelPassedCount = 0;
+let autoLabelMarkedCount = 0;
+let autoLabelStatusTimer = null;
+let autoLabelCheckInterval = null;
+let autoLabelEndedFinalizeTimer = null;
+let badcasePosting = new Set();
+const badcaseFilenameCounts = new Map();
+const DUPLICATE_BADCASE_MESSAGE = '该条语音已存在错误列表 / 已标注，请勿重复标注。';
+let retestRunning = false;
+let retestPaused = false;
+let retestSession = null;
+let retestRestartRequested = false;
+let currentTaskHeartbeatTimer = null;
+
+// ========== 格式化时间 ==========
+function formatTime(sec) {
+    const m = Math.floor(sec / 60);
+    const s = Math.floor(sec % 60);
+    return `${m}:${s.toString().padStart(2, '0')}`;
+}
+
+// ========== 获取当前音频索引 ==========
+function getCurrentIndex(currentTime) {
+    for (let i = 0; i < timestamps.length; i++) {
+        if (currentTime >= timestamps[i].start_time && currentTime < timestamps[i].end_time) {
+            return i;
+        }
+    }
+    // 如果不在任何区间内，找最接近的
+    for (let i = 0; i < timestamps.length - 1; i++) {
+        if (currentTime >= timestamps[i].end_time && currentTime < timestamps[i+1].start_time) {
+            return i;
+        }
+    }
+    if (currentTime >= timestamps[timestamps.length - 1].end_time) {
+        return timestamps.length - 1;
+    }
+    return 0;
+}
+
+// ========== 更新当前文件显示 ==========
+function updateCurrentFile(idx) {
+    if (idx < 0 || idx >= timestamps.length) return;
+    currentIndex = idx;
+    const ts = timestamps[idx];
+    currentFileName.textContent = ts.filename;
+    currentFileTime.textContent = `${ts.start_time.toFixed(2)}s - ${ts.end_time.toFixed(2)}s`;
+    
+    // 高亮文件列表
+    fileItems.forEach((item, i) => {
+        if (i === idx) {
+            item.classList.add('active');
+            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+            item.classList.remove('active');
+        }
+    });
+}
+
+function registerCurrentTask() {
+    if (!window.AudioLabCurrentTask) return;
+    window.AudioLabCurrentTask.set({
+        taskId,
+        taskName,
+        url: `/player/${taskId}`,
+        updatedAt: Date.now()
+    });
+}
+
+function ensureCurrentTaskWindow() {
+    if (currentTaskRedirecting) return;
+    if (window.name === CURRENT_TASK_WINDOW_NAME) return;
+    const currentTask = window.AudioLabCurrentTask ? window.AudioLabCurrentTask.get() : null;
+    if (currentTask && currentTask.taskId && currentTask.taskId !== taskId) return;
+
+    currentTaskRedirecting = true;
+    registerCurrentTask();
+    const targetWindow = window.open(`/player/${taskId}`, CURRENT_TASK_WINDOW_NAME);
+    if (targetWindow) {
+        targetWindow.focus();
+        setTimeout(() => {
+            if (!window.closed) {
+                window.location.replace('/');
+            }
+        }, 50);
+    } else {
+        currentTaskRedirecting = false;
+    }
+}
+
+function writeCurrentTaskHeartbeat() {
+    try {
+        window.localStorage.setItem(CURRENT_TASK_PING_KEY, JSON.stringify({
+            taskId,
+            url: `/player/${taskId}`,
+            windowName: CURRENT_TASK_WINDOW_NAME,
+            updatedAt: Date.now()
+        }));
+    } catch (e) {}
+}
+
+function startCurrentTaskHeartbeat() {
+    writeCurrentTaskHeartbeat();
+    if (currentTaskHeartbeatTimer) {
+        clearInterval(currentTaskHeartbeatTimer);
+    }
+    currentTaskHeartbeatTimer = setInterval(writeCurrentTaskHeartbeat, 2000);
+}
+
+function handleCurrentTaskFocusRequest(event) {
+    if (event.key !== CURRENT_TASK_FOCUS_KEY || !event.newValue) return;
+    if (window.name !== CURRENT_TASK_WINDOW_NAME) return;
+
+    let payload = null;
+    try {
+        payload = JSON.parse(event.newValue);
+    } catch (e) {
+        return;
+    }
+    if (!payload || payload.windowName !== CURRENT_TASK_WINDOW_NAME) return;
+
+    try {
+        window.focus();
+    } catch (e) {}
+}
+
+function getTimestampByFilename(filename) {
+    return timestamps.find(ts => ts.filename === filename);
+}
+
+function formatBadcaseFilename(filename) {
+    const ts = getTimestampByFilename(filename);
+    return ts ? `${ts.index}. ${filename}` : filename;
+}
+
+function setFileBadgeVisibleByFilename(filename, visible) {
+    const ts = getTimestampByFilename(filename);
+    if (!ts) return;
+    const badge = document.getElementById(`badge-${ts.index}`);
+    if (badge) badge.style.display = visible ? 'block' : 'none';
+}
+
+function getBadcaseCountForFilename(filename) {
+    return badcaseFilenameCounts.get(filename) || 0;
+}
+
+function hasBadcaseForFilename(filename) {
+    return getBadcaseCountForFilename(filename) > 0;
+}
+
+function incrementBadcaseFilename(filename) {
+    if (!filename) return 0;
+    const nextCount = getBadcaseCountForFilename(filename) + 1;
+    badcaseFilenameCounts.set(filename, nextCount);
+    setFileBadgeVisibleByFilename(filename, true);
+    return nextCount;
+}
+
+function decrementBadcaseFilename(filename) {
+    if (!filename) return 0;
+    const nextCount = Math.max(0, getBadcaseCountForFilename(filename) - 1);
+    if (nextCount > 0) {
+        badcaseFilenameCounts.set(filename, nextCount);
+        setFileBadgeVisibleByFilename(filename, true);
+    } else {
+        badcaseFilenameCounts.delete(filename);
+        setFileBadgeVisibleByFilename(filename, false);
+    }
+    return nextCount;
+}
+
+function isBadcaseUnavailable(filename) {
+    return !filename || hasBadcaseForFilename(filename) || badcasePosting.has(filename);
+}
+
+initialBadcases.forEach(badcase => {
+    const filename = badcase.filename;
+    if (!filename) return;
+    incrementBadcaseFilename(filename);
+    autoLabelMarked.add(filename);
+});
+
+function rebuildBadcaseStateFromUI() {
+    badcaseFilenameCounts.clear();
+    autoLabelMarked.clear();
+    const items = badcaseList ? Array.from(badcaseList.querySelectorAll('.badcase-item')) : [];
+    items.forEach(item => {
+        const filename = item.dataset.filename || '';
+        if (!filename) return;
+        incrementBadcaseFilename(filename);
+        autoLabelMarked.add(filename);
+    });
+}
+
+// ========== 播放控制 ==========
+btnPlay.addEventListener('click', () => {
+    if (audio.paused) {
+        audio.play();
+        setPlayButtonState(true);
+        isPlaying = true;
+    } else {
+        audio.pause();
+        setPlayButtonState(false);
+        isPlaying = false;
+    }
+});
+
+btnStop.addEventListener('click', () => {
+    audio.pause();
+    audio.currentTime = 0;
+    setPlayButtonState(false);
+    isPlaying = false;
+});
+
+// ========== 进度条 ==========
+audio.addEventListener('loadedmetadata', () => {
+    timeTotal.textContent = formatTime(audio.duration);
+});
+
+audio.addEventListener('timeupdate', () => {
+    const current = audio.currentTime;
+    const duration = audio.duration || 1;
+    const pct = (current / duration) * 100;
+    progressPlayed.style.width = pct + '%';
+    progressHandle.style.left = pct + '%';
+    timeCurrent.textContent = formatTime(current);
+    
+    const idx = getCurrentIndex(current);
+    if (idx !== currentIndex) {
+        updateCurrentFile(idx);
+    }
+    checkAutoLabelWindows();
+});
+
+audio.addEventListener('ended', () => {
+    setPlayButtonState(false);
+    isPlaying = false;
+    checkAutoLabelWindows();
+    if (autoLabelEnabled) {
+        if (autoLabelEndedFinalizeTimer) clearTimeout(autoLabelEndedFinalizeTimer);
+        autoLabelEndedFinalizeTimer = setTimeout(forceFinalizeAutoLabelWindows, taskSilenceDuration * 1000);
+    }
+});
+
+// 点击进度条跳转
+progressTrack.addEventListener('click', (e) => {
+    const rect = progressTrack.getBoundingClientRect();
+    const pct = (e.clientX - rect.left) / rect.width;
+    audio.currentTime = pct * (audio.duration || 0);
+});
+
+// ========== 文件列表点击 ==========
+fileItems.forEach((item, idx) => {
+    item.addEventListener('click', () => {
+        jumpToTime(timestamps[idx].start_time);
+    });
+});
+
+function jumpToTime(time) {
+    audio.currentTime = time;
+    if (!isPlaying) {
+        audio.play();
+        setPlayButtonState(true);
+        isPlaying = true;
+    }
+}
+
+// ========== 文件搜索 ==========
+fileSearch.addEventListener('input', (e) => {
+    const keyword = e.target.value.toLowerCase();
+    fileItems.forEach(item => {
+        const name = item.dataset.filename.toLowerCase();
+        item.style.display = name.includes(keyword) ? 'flex' : 'none';
+    });
+});
+
+// ========== 自动标注 ==========
+function updateAutoLabelStatus(message = '') {
+    autoLabelState.textContent = `自动标注：${autoLabelEnabled ? '运行中' : '关闭'}`;
+    btnAutoLabel.textContent = autoLabelEnabled ? '关闭自动标注' : '开启自动标注';
+    autoLabelPassedCountEl.textContent = autoLabelPassedCount;
+    autoLabelMarkedCountEl.textContent = autoLabelMarkedCount;
+    autoLabelMessage.textContent = message;
+    if (autoLabelStatusTimer) clearTimeout(autoLabelStatusTimer);
+    if (message) {
+        autoLabelStatusTimer = setTimeout(() => {
+            autoLabelMessage.textContent = '';
+        }, 4000);
+    }
+}
+
+function updateRetestStatus(message = '') {
+    if (!retestState || !btnRetestAll) return;
+    retestState.textContent = `复测：${retestRunning ? (retestPaused ? '已暂停' : '运行中') : '未开始'}`;
+    btnRetestAll.textContent = retestRunning ? (retestPaused ? '继续复测' : '暂停复测') : '总复测';
+    btnRetestAll.disabled = false;
+    if (btnRetestRestart) btnRetestRestart.disabled = false;
+    retestMessage.textContent = message;
+}
+
+function pauseRetestAudio() {
+    audio.pause();
+    setPlayButtonState(false);
+    isPlaying = false;
+}
+
+async function playRetestAudioFrom(time) {
+    audio.currentTime = Math.max(0, Number(time) || 0);
+    try {
+        await audio.play();
+        setPlayButtonState(true);
+        isPlaying = true;
+        return true;
+    } catch (e) {
+        setPlayButtonState(false);
+        isPlaying = false;
+        console.warn('start retest audio failed', e);
+        updateRetestStatus(`复测播放失败：${e.message || '无法播放音频'}`);
+        return false;
+    }
+}
+
+function isWakeLogLine(line) {
+    return String(line || '').toLowerCase().includes('keyword:');
+}
+
+function getVoiceprintSequenceIndex(ts) {
+    return Number(ts && ts.index ? ts.index : 0);
+}
+
+function isVoiceprintInLibrary(ts) {
+    return getVoiceprintSequenceIndex(ts) > 0 && getVoiceprintSequenceIndex(ts) <= voiceprintInCount;
+}
+
+function parseExpectedSpeakerNumber(filename) {
+    const match = String(filename || '').match(VOICEPRINT_EXPECTED_NUMBER_RE);
+    return match ? match[1] : '';
+}
+
+function parseSpeakerField(line) {
+    const match = String(line || '').match(VOICEPRINT_SPEAKER_FIELD_RE);
+    return match ? match[1].trim() : '';
+}
+
+function parseActualSpeakerNumber(speakerValue) {
+    const speaker = String(speakerValue || '').trim();
+    if (!speaker || /^none$/i.test(speaker)) return '';
+    const match = speaker.match(VOICEPRINT_NUMBER_RE);
+    return match ? match[1] : '';
+}
+
+function chooseFinalVoiceprintSpeaker(state) {
+    if (!state || !Array.isArray(state.speakerEvents) || state.speakerEvents.length === 0) {
+        return { speaker: '', number: '', line: '' };
+    }
+
+    const lastNonNone = [...state.speakerEvents].reverse().find(event => event.speaker && !/^none$/i.test(event.speaker));
+    if (lastNonNone) {
+        return {
+            speaker: lastNonNone.speaker,
+            number: parseActualSpeakerNumber(lastNonNone.speaker),
+            line: lastNonNone.line || ''
+        };
+    }
+
+    const lastEvent = state.speakerEvents[state.speakerEvents.length - 1];
+    return {
+        speaker: lastEvent.speaker || 'none',
+        number: parseActualSpeakerNumber(lastEvent.speaker),
+        line: lastEvent.line || ''
+    };
+}
+
+function buildVoiceprintAutoLabelResult(state) {
+    const ts = state && state.ts ? state.ts : null;
+    if (!ts) return null;
+
+    const filename = ts.filename || '';
+    const expectedNumber = parseExpectedSpeakerNumber(filename);
+    const finalSpeaker = chooseFinalVoiceprintSpeaker(state);
+    const inLibrary = isVoiceprintInLibrary(ts);
+
+    if (inLibrary) {
+        if (!expectedNumber) {
+            return {
+                errorType: 'FN',
+                note: `自动标注：无法从文件名前缀解析期望 speaker 编号；文件名 ${filename}`
+            };
+        }
+        if (!state.hasLog) {
+            return {
+                errorType: 'FN',
+                note: `自动标注：库内声纹未识别，播放片段及间隔时间内没有出现新日志；期望 speaker${expectedNumber}`
+            };
+        }
+        if (!finalSpeaker.speaker || /^none$/i.test(finalSpeaker.speaker)) {
+            return {
+                errorType: 'FN',
+                note: `自动标注：库内声纹未识别，期望 speaker${expectedNumber}，实际 none`
+            };
+        }
+        if (!finalSpeaker.number) {
+            const actualLine = finalSpeaker.line || finalSpeaker.speaker;
+            return {
+                errorType: 'FN',
+                note: `自动标注：库内声纹识别结果无法解析编号，期望 speaker${expectedNumber}，实际日志 ${actualLine}`
+            };
+        }
+        if (finalSpeaker.number === expectedNumber) {
+            return { passed: true };
+        }
+        return {
+            errorType: 'FN',
+            note: `自动标注：库内声纹识别不匹配，期望 speaker${expectedNumber}，实际 ${finalSpeaker.speaker}`
+        };
+    }
+
+    if (!state.hasLog) {
+        return { passed: true };
+    }
+    if (!finalSpeaker.speaker || /^none$/i.test(finalSpeaker.speaker)) {
+        return { passed: true };
+    }
+    return {
+        errorType: 'FP',
+        note: `自动标注：库外声纹被误识别为库内 ${finalSpeaker.speaker}`
+    };
+}
+
+function getAutoLabelWindowEnd(ts) {
+    return Number(ts.end_time || 0) + taskSilenceDuration;
+}
+
+function ensureAutoLabelWindowForIndex(idx, current = audio.currentTime || 0) {
+    if (!autoLabelEnabled || idx < 0 || idx >= timestamps.length) return null;
+
+    const ts = timestamps[idx];
+    const filename = ts.filename;
+    if (isBadcaseUnavailable(filename) || autoLabelPassed.has(filename) || autoLabelMarked.has(filename) || autoLabelMarking.has(filename)) return null;
+
+    const windowStart = Number(ts.start_time || 0);
+    const windowEnd = getAutoLabelWindowEnd(ts);
+    const existingWindow = autoLabelWindows.get(filename);
+    if (existingWindow) {
+        return current >= windowStart && current <= windowEnd ? existingWindow : null;
+    }
+    if (current < windowStart || current > Number(ts.end_time || 0)) return null;
+
+    autoLabelWindows.set(filename, {
+        ts,
+        filename,
+        windowStart,
+        windowEnd,
+        hasLog: false,
+        keywordHit: false,
+        logLines: [],
+        speakerEvents: [],
+        finalized: false
+    });
+    updateAutoLabelStatus(`观察中：${filename}`);
+
+    return autoLabelWindows.get(filename);
+}
+
+function ensureAutoLabelWindowForCurrent() {
+    if (!autoLabelEnabled || timestamps.length === 0) return null;
+    return ensureAutoLabelWindowForIndex(getCurrentIndex(audio.currentTime), audio.currentTime || 0);
+}
+
+function markAutoPassed(filename) {
+    if (isBadcaseUnavailable(filename) || autoLabelPassed.has(filename) || autoLabelMarked.has(filename) || autoLabelMarking.has(filename)) return;
+    autoLabelPassed.add(filename);
+    const state = autoLabelWindows.get(filename);
+    if (state) state.finalized = true;
+    autoLabelPassedCount += 1;
+    updateAutoLabelStatus(`已检测到关键词：${filename}`);
+}
+
+function processAutoLabelLogOutput(output) {
+    if (!autoLabelEnabled || !output) return;
+    const state = ensureAutoLabelWindowForCurrent();
+    if (!state || state.finalized) return;
+
+    output.split(/\r?\n/).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line) return;
+
+        state.hasLog = true;
+        state.logLines.push(line);
+        if (taskType === 'voiceprint') {
+            const speaker = parseSpeakerField(line);
+            if (speaker || /speaker:/i.test(line)) {
+                state.speakerEvents.push({ line, speaker: speaker || 'none' });
+            }
+        } else if (isWakeLogLine(line)) {
+            state.keywordHit = true;
+        }
+    });
+
+    if (taskType !== 'voiceprint' && state.keywordHit) {
+        markAutoPassed(state.filename);
+    }
+}
+
+function processRetestLogOutput(output) {
+    if (!retestRunning || !retestSession || !retestSession.currentRun || !output) return;
+
+    output.split(/\r?\n/).forEach(rawLine => {
+        const line = rawLine.trim();
+        if (!line) return;
+        if (isWakeLogLine(line)) {
+            retestSession.currentRun.detected = true;
+        }
+    });
+}
+
+function getRetestQueue() {
+    return Array.from(badcaseList.querySelectorAll('.badcase-item')).map(item => ({
+        id: Number(item.dataset.id),
+        startTime: Number(item.dataset.start),
+        filename: item.dataset.filename || ''
+    })).map(entry => {
+        const ts = getTimestampByFilename(entry.filename);
+        return {
+            ...entry,
+            endTime: ts ? Number(ts.end_time || entry.startTime) : entry.startTime
+        };
+    });
+}
+
+function getBadcaseItemById(id) {
+    return document.querySelector(`.badcase-item[data-id="${id}"]`);
+}
+
+function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function stopPlayback() {
+    if (!audio.paused) {
+        btnPlay.click();
+        return;
+    }
+    setPlayButtonState(false);
+    isPlaying = false;
+}
+
+async function waitWhileRetestPaused() {
+    while (retestRunning && retestPaused) {
+        await sleep(200);
+    }
+}
+
+async function waitForRetestStopTime(stopTime) {
+    while (retestRunning) {
+        await waitWhileRetestPaused();
+        if (!retestRunning) return;
+        const duration = Number(audio.duration) || 0;
+        if (audio.ended || (audio.paused && duration > 0 && (audio.currentTime || 0) >= duration - 0.05)) {
+            pauseRetestAudio();
+            return;
+        }
+        if ((audio.currentTime || 0) >= stopTime) {
+            pauseRetestAudio();
+            return;
+        }
+        await sleep(20);
+    }
+}
+
+function getRetestStopTime(entry) {
+    const endTime = Number(entry && entry.endTime ? entry.endTime : entry.startTime || 0);
+    return Math.max(Number(entry && entry.startTime ? entry.startTime : 0), endTime + taskSilenceDuration - RETEST_INTERVAL_OFFSET_SEC);
+}
+
+async function drainSSHOutput() {
+    if (!sshConnected) return;
+    try {
+        const res = await fetch(`/api/ssh/output?task_id=${taskId}`);
+        const data = await res.json();
+        if (data.success && data.output) {
+            processAutoLabelLogOutput(data.output);
+            processRetestLogOutput(data.output);
+            appendTerminal(data.output);
+        }
+    } catch (e) {
+        console.warn('drain ssh output error', e);
+    }
+}
+
+async function runRetestAll() {
+    if (taskType !== 'wake' || !btnRetestAll) return;
+    if (retestRunning) {
+        retestPaused = !retestPaused;
+        if (retestPaused) {
+            audio.pause();
+            setPlayButtonState(false);
+            isPlaying = false;
+        } else if (retestSession && retestSession.currentRun && audio.paused) {
+            try {
+                await audio.play();
+                setPlayButtonState(true);
+                isPlaying = true;
+            } catch (e) {
+                console.warn('resume retest audio failed', e);
+            }
+        }
+        updateRetestStatus(retestPaused ? '复测已暂停。' : '复测继续执行。');
+        return;
+    }
+    if (autoLabelEnabled) {
+        alert('请先关闭自动标注，再执行总复测。');
+        return;
+    }
+    if (!sshConnected) {
+        alert('请先连接 SSH，再执行总复测。');
+        return;
+    }
+
+    const queue = getRetestQueue();
+    if (queue.length === 0) {
+        updateRetestStatus('当前没有可复测的 badcase。');
+        return;
+    }
+
+    retestRunning = true;
+    retestPaused = false;
+    retestSession = {
+        queue,
+        currentRun: null,
+        recovered: 0,
+        processed: 0
+    };
+    updateRetestStatus(`准备复测 ${queue.length} 条 badcase。`);
+
+    let finalMessage = '';
+    try {
+        for (const entry of queue) {
+            if (!sshConnected) throw new Error('SSH 已断开');
+            await waitWhileRetestPaused();
+            if (!retestRunning) break;
+            if (!getBadcaseItemById(entry.id)) continue;
+
+            let hitCount = 0;
+            for (let attempt = 1; attempt <= RETEST_REPEAT_COUNT; attempt++) {
+                if (!sshConnected) throw new Error('SSH 已断开');
+                await waitWhileRetestPaused();
+                if (!retestRunning) break;
+                await drainSSHOutput();
+                await waitWhileRetestPaused();
+                if (!retestRunning) break;
+                retestSession.currentRun = {
+                    badcaseId: entry.id,
+                    filename: entry.filename,
+                    attempt,
+                    detected: false
+                };
+                updateRetestStatus(`复测 ${retestSession.processed + 1}/${queue.length}：${entry.filename} 第 ${attempt}/${RETEST_REPEAT_COUNT} 次`);
+                await waitWhileRetestPaused();
+                if (!retestRunning) break;
+                const playbackStarted = await playRetestAudioFrom(entry.startTime);
+                if (!playbackStarted) throw new Error('复测音频播放失败');
+                await waitForRetestStopTime(getRetestStopTime(entry));
+                await drainSSHOutput();
+                if (!retestRunning) break;
+
+                const currentAttemptDetected = (
+                    retestSession.currentRun &&
+                    retestSession.currentRun.badcaseId === entry.id &&
+                    retestSession.currentRun.attempt === attempt &&
+                    retestSession.currentRun.detected
+                );
+                if (currentAttemptDetected) {
+                    hitCount += 1;
+                }
+                if (!currentAttemptDetected && attempt < RETEST_REPEAT_COUNT) {
+                    updateRetestStatus('\u590d\u6d4b\u4fdd\u7559\uff1a' + entry.filename + '\uff08\u7b2c ' + attempt + ' \u6b21\u672a\u5524\u9192\uff0c\u8df3\u8fc7\u5269\u4f59\u590d\u6d4b\uff09');
+                    break;
+                }
+            }
+
+            retestSession.currentRun = null;
+            retestSession.processed += 1;
+
+            if (hitCount === RETEST_REPEAT_COUNT && getBadcaseItemById(entry.id)) {
+                const removed = await deleteBadcase(entry.id, { skipConfirm: true, silent: true });
+                if (removed) {
+                    retestSession.recovered += 1;
+                    updateRetestStatus(`复测通过并已移除：${entry.filename}`);
+                } else {
+                    updateRetestStatus(`复测通过，但删除失败：${entry.filename}`);
+                }
+            } else {
+                updateRetestStatus(`复测保留：${entry.filename}（命中 ${hitCount}/${RETEST_REPEAT_COUNT}）`);
+            }
+        }
+
+        finalMessage = `复测完成：已移除 ${retestSession.recovered} 条，剩余 ${badcaseList.querySelectorAll('.badcase-item').length} 条。`;
+    } catch (e) {
+        console.warn('retest error', e);
+        finalMessage = `复测中断：${e.message || '未知错误'}`;
+    } finally {
+        const shouldRestart = retestRestartRequested;
+        if (shouldRestart) {
+            retestRestartRequested = false;
+            finalMessage = '\u6b63\u5728\u91cd\u65b0\u590d\u6d4b...';
+        }
+        audio.pause();
+        setPlayButtonState(false);
+        isPlaying = false;
+        retestRunning = false;
+        retestPaused = false;
+        retestSession = null;
+        updateRetestStatus(finalMessage);
+        if (shouldRestart) setTimeout(runRetestAll, 0);
+    }
+}
+
+async function restartRetestAll() {
+    if (taskType !== 'wake' || !btnRetestAll) return;
+    if (retestRunning) {
+        retestRestartRequested = true;
+        retestRunning = false;
+        retestPaused = false;
+        pauseRetestAudio();
+        updateRetestStatus('\u6b63\u5728\u505c\u6b62\u5f53\u524d\u590d\u6d4b\uff0c\u51c6\u5907\u91cd\u65b0\u590d\u6d4b...');
+        return;
+    }
+    await runRetestAll();
+}
+
+function formatAutoLogNote(logLines) {
+    const logText = logLines.join(' | ').trim();
+    if (!logText) return AUTO_LABEL_NO_LOG_NOTE;
+    const clipped = logText.length > 1000 ? `${logText.slice(0, 1000)}...` : logText;
+    return `${AUTO_LABEL_NO_KEYWORD_NOTE_PREFIX}${clipped}`;
+}
+
+function finalizeAutoLabelWindow(state) {
+    if (!state || state.finalized) return;
+    if (isBadcaseUnavailable(state.filename) || autoLabelPassed.has(state.filename) || autoLabelMarked.has(state.filename) || autoLabelMarking.has(state.filename)) {
+        state.finalized = true;
+        return;
+    }
+
+    state.finalized = true;
+    if (taskType === 'voiceprint') {
+        const result = buildVoiceprintAutoLabelResult(state);
+        if (!result) return;
+        if (result.passed) {
+            markAutoPassed(state.filename);
+            return;
+        }
+        markAutoBadcase(state.ts, result.note || AUTO_LABEL_NO_LOG_NOTE, result.errorType || 'FN');
+        return;
+    }
+
+    const note = state.hasLog ? formatAutoLogNote(state.logLines) : AUTO_LABEL_NO_LOG_NOTE;
+    markAutoBadcase(state.ts, note);
+}
+
+function checkAutoLabelWindows() {
+    if (!autoLabelEnabled) return;
+    ensureAutoLabelWindowForCurrent();
+    const current = audio.currentTime || 0;
+    autoLabelWindows.forEach(state => {
+        if (!state.finalized && current >= state.windowEnd) {
+            finalizeAutoLabelWindow(state);
+        }
+    });
+}
+
+function forceFinalizeAutoLabelWindows() {
+    if (!autoLabelEnabled) return;
+    autoLabelWindows.forEach(state => {
+        if (!state.finalized) finalizeAutoLabelWindow(state);
+    });
+}
+
+async function markAutoBadcase(ts, note, errorType = '') {
+    const filename = ts.filename;
+    if (isBadcaseUnavailable(filename) || autoLabelPassed.has(filename) || autoLabelMarked.has(filename) || autoLabelMarking.has(filename)) return;
+
+    autoLabelMarking.add(filename);
+    badcasePosting.add(filename);
+    try {
+        const formData = new FormData();
+        formData.append('filename', filename);
+        formData.append('start_time', ts.start_time);
+        formData.append('end_time', ts.end_time);
+        formData.append('note', note);
+        if (taskType === 'voiceprint') {
+            formData.append('error_type', (errorType || 'FN').toUpperCase());
+        }
+
+        const res = await fetch(`/api/tasks/${taskId}/badcases`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+
+        if (data.success) {
+            autoLabelMarked.add(filename);
+            autoLabelMarkedCount += 1;
+            addBadcaseToUI(data.badcase);
+            updateAutoLabelStatus(`已自动标注：${filename}`);
+        } else {
+            console.warn('auto label failed', data);
+            updateAutoLabelStatus('自动标注失败，详情见控制台');
+        }
+    } catch (e) {
+        console.warn('auto label error', e);
+        updateAutoLabelStatus('自动标注失败，详情见控制台');
+    } finally {
+        autoLabelMarking.delete(filename);
+        badcasePosting.delete(filename);
+    }
+}
+
+btnAutoLabel.addEventListener('click', () => {
+    autoLabelEnabled = !autoLabelEnabled;
+    if (autoLabelEnabled) {
+        autoLabelWindows.clear();
+        autoLabelPassed.clear();
+        autoLabelMarked.clear();
+        autoLabelMarking.clear();
+        if (autoLabelCheckInterval) clearInterval(autoLabelCheckInterval);
+        autoLabelCheckInterval = null;
+        if (autoLabelEndedFinalizeTimer) {
+            clearTimeout(autoLabelEndedFinalizeTimer);
+            autoLabelEndedFinalizeTimer = null;
+        }
+        autoLabelPassedCount = 0;
+        autoLabelMarkedCount = 0;
+        badcasePosting.clear();
+        rebuildBadcaseStateFromUI();
+        autoLabelCheckInterval = setInterval(checkAutoLabelWindows, 500);
+        updateAutoLabelStatus('自动标注已开启');
+        ensureAutoLabelWindowForCurrent();
+        checkAutoLabelWindows();
+    } else {
+        if (autoLabelCheckInterval) {
+            clearInterval(autoLabelCheckInterval);
+            autoLabelCheckInterval = null;
+        }
+        if (autoLabelEndedFinalizeTimer) {
+            clearTimeout(autoLabelEndedFinalizeTimer);
+            autoLabelEndedFinalizeTimer = null;
+        }
+        autoLabelWindows.clear();
+        autoLabelMarking.clear();
+        updateAutoLabelStatus('自动标注已关闭');
+    }
+});
+
+// ========== Badcase标记 ==========
+async function markCurrentFile(errorType = '') {
+    if (currentIndex < 0 || currentIndex >= timestamps.length) {
+        alert('请先播放音频，暂停到要标记的位置');
+        return;
+    }
+    
+    const ts = timestamps[currentIndex];
+    if (hasBadcaseForFilename(ts.filename) || badcasePosting.has(ts.filename)) {
+        alert(DUPLICATE_BADCASE_MESSAGE);
+        return;
+    }
+
+    const note = badcaseNote.value.trim();
+    const normalizedErrorType = (errorType || '').toUpperCase();
+    
+    badcasePosting.add(ts.filename);
+    try {
+        const formData = new FormData();
+        formData.append('filename', ts.filename);
+        formData.append('start_time', ts.start_time);
+        formData.append('end_time', ts.end_time);
+        if (taskType === 'voiceprint') {
+            formData.append('error_type', normalizedErrorType);
+        }
+        formData.append('note', note);
+        
+        const res = await fetch(`/api/tasks/${taskId}/badcases`, {
+            method: 'POST',
+            body: formData
+        });
+        const data = await res.json();
+        
+        if (data.success) {
+            addBadcaseToUI(data.badcase);
+            autoLabelMarked.add(ts.filename);
+            badcaseNote.value = '';
+        } else {
+            alert('标记失败');
+        }
+    } catch (e) {
+        alert('标记失败: ' + e.message);
+    } finally {
+        badcasePosting.delete(ts.filename);
+    }
+}
+
+if (btnMark) {
+    btnMark.addEventListener('click', () => markCurrentFile());
+}
+
+voiceprintMarkButtons.forEach(btn => {
+    btn.addEventListener('click', () => markCurrentFile(btn.dataset.errorType));
+});
+
+function escapeHtml(value) {
+    return String(value ?? '').replace(/[&<>"']/g, ch => ({
+        '&': '&amp;',
+        '<': '&lt;',
+        '>': '&gt;',
+        '"': '&quot;',
+        "'": '&#39;'
+    }[ch]));
+}
+
+function updateStatsSummary() {
+    const totalFiles = timestamps.length;
+    const badcaseTotal = badcaseList ? badcaseList.querySelectorAll('.badcase-item').length : 0;
+    if (statsTotalFilesEl) statsTotalFilesEl.textContent = String(totalFiles);
+    if (badcaseCount) badcaseCount.textContent = String(badcaseTotal);
+
+    if (taskType === 'voiceprint') {
+        const items = badcaseList ? Array.from(badcaseList.querySelectorAll('.badcase-item')) : [];
+        const fnCount = items.filter(item => (item.dataset.errorType || '').toUpperCase() === 'FN').length;
+        const fpCount = items.filter(item => (item.dataset.errorType || '').toUpperCase() === 'FP').length;
+        const inCount = Math.min(voiceprintInCount, totalFiles);
+        const outCount = Math.max(0, totalFiles - inCount);
+        const frr = inCount > 0 ? ((fnCount / inCount) * 100).toFixed(2) : '0.00';
+        const far = outCount > 0 ? ((fpCount / outCount) * 100).toFixed(2) : '0.00';
+
+        if (statsFnCountEl) statsFnCountEl.textContent = String(fnCount);
+        if (statsFpCountEl) statsFpCountEl.textContent = String(fpCount);
+        if (statsFrrEl) statsFrrEl.textContent = `${frr}%`;
+        if (statsFarEl) statsFarEl.textContent = `${far}%`;
+        return;
+    }
+
+    const successTotal = Math.max(0, totalFiles - badcaseTotal);
+    const successRate = totalFiles > 0 ? ((successTotal / totalFiles) * 100).toFixed(2) : '0.00';
+    if (statsBadcaseCountEl) statsBadcaseCountEl.textContent = String(badcaseTotal);
+    if (statsSuccessCountEl) statsSuccessCountEl.textContent = String(successTotal);
+    if (statsSuccessRateEl) statsSuccessRateEl.textContent = `${successRate}%`;
+}
+
+function addBadcaseToUI(badcase) {
+    const div = document.createElement('div');
+    const id = Number(badcase.id);
+    const startTime = Number(badcase.start_time);
+    const endTime = Number(badcase.end_time);
+    const errorType = badcase.error_type ? ` · ${escapeHtml(badcase.error_type)}` : '';
+    const noteHtml = badcase.note ? `<div class="badcase-note">${escapeHtml(badcase.note)}</div>` : '';
+
+    div.className = 'badcase-item';
+    div.dataset.id = id;
+    div.dataset.start = startTime;
+    div.dataset.filename = badcase.filename || '';
+    div.dataset.errorType = badcase.error_type || '';
+    div.innerHTML = `
+        <div class="badcase-header">
+            <span class="badcase-id">#${id}${errorType}</span>
+            <span class="badcase-time">${escapeHtml(badcase.mark_time)}</span>
+        </div>
+        <div class="badcase-file">${escapeHtml(formatBadcaseFilename(badcase.filename || ''))}</div>
+        <div class="badcase-range">${startTime.toFixed(2)}s - ${endTime.toFixed(2)}s</div>
+        ${noteHtml}
+        <div class="badcase-actions">
+            <button class="btn btn-small" onclick="jumpToTime(${startTime})">跳转</button>
+            <button class="btn btn-small btn-danger" onclick="deleteBadcase(${id})">删除</button>
+        </div>
+    `;
+    badcaseList.prepend(div);
+    incrementBadcaseFilename(badcase.filename);
+    updateStatsSummary();
+}
+
+async function deleteBadcase(id, options = {}) {
+    const { skipConfirm = false, silent = false } = options;
+    if (!skipConfirm && !confirm('确定删除此badcase?')) return false;
+    try {
+        const res = await fetch(`/api/tasks/${taskId}/badcases/${id}`, { method: 'DELETE' });
+        const data = await res.json();
+        if (data.success) {
+            const item = document.querySelector(`.badcase-item[data-id="${id}"]`);
+            const filename = item ? item.dataset.filename : '';
+            if (item) item.remove();
+            decrementBadcaseFilename(filename);
+            updateStatsSummary();
+            return true;
+        }
+        if (!silent) alert('删除失败');
+    } catch (e) {
+        if (!silent) alert('删除失败: ' + e.message);
+    }
+    return false;
+}
+
+// ========== SSH终端 ==========
+let sshConnected = false;
+let sshPollInterval = null;
+const sshTerminal = document.getElementById('sshTerminal');
+const sshForm = document.getElementById('sshForm');
+const sshToolbar = document.getElementById('sshToolbar');
+const sshInputLine = document.getElementById('sshInputLine');
+const sshStatus = document.getElementById('sshStatus');
+const sshHostDisplay = document.getElementById('sshHostDisplay');
+
+function appendTerminal(text) {
+    if (!text) return;
+    const span = document.createElement('span');
+    span.textContent = text;
+    sshTerminal.appendChild(span);
+    sshTerminal.scrollTop = sshTerminal.scrollHeight;
+}
+
+async function connectSSH() {
+    const host = document.getElementById('sshHost').value.trim();
+    const port = parseInt(document.getElementById('sshPort').value) || 22;
+    const username = document.getElementById('sshUser').value.trim();
+    const password = document.getElementById('sshPass').value;
+    if (!host || !username) {
+        alert('请填写主机地址和用户名');
+        return;
+    }
+    const btn = document.getElementById('btnSSHConnect');
+    btn.textContent = '连接中...';
+    btn.disabled = true;
+    try {
+        const formData = new FormData();
+        formData.append('task_id', taskId);
+        formData.append('host', host);
+        formData.append('port', port);
+        formData.append('username', username);
+        formData.append('password', password);
+        const res = await fetch('/api/ssh/connect', { method: 'POST', body: formData });
+        const data = await res.json();
+        if (data.success) {
+            sshConnected = true;
+            sshForm.style.display = 'none';
+            sshToolbar.style.display = 'flex';
+            sshInputLine.style.display = 'flex';
+            sshStatus.textContent = '已连接';
+            sshStatus.classList.add('connected');
+            sshHostDisplay.textContent = `${username}@${host}`;
+            appendTerminal(`\n=== 已连接到 ${host} ===\n`);
+            startSSHPoll();
+        } else {
+            alert('连接失败: ' + (data.message || '未知错误'));
+        }
+    } catch (e) {
+        alert('连接失败: ' + e.message);
+    } finally {
+        btn.textContent = '连接设备';
+        btn.disabled = false;
+    }
+}
+
+async function disconnectSSH() {
+    try {
+        const formData = new FormData();
+        formData.append('task_id', taskId);
+        await fetch('/api/ssh/disconnect', { method: 'POST', body: formData });
+    } catch (e) {}
+    sshConnected = false;
+    sshForm.style.display = 'block';
+    sshToolbar.style.display = 'none';
+    sshInputLine.style.display = 'none';
+    sshStatus.textContent = '未连接';
+    sshStatus.classList.remove('connected');
+    if (sshPollInterval) {
+        clearInterval(sshPollInterval);
+        sshPollInterval = null;
+    }
+    appendTerminal('\n=== 连接已断开 ===\n');
+}
+
+async function sendSSHCmd(cmd) {
+    if (!sshConnected) return;
+    try {
+        const formData = new FormData();
+        formData.append('task_id', taskId);
+        formData.append('command', cmd);
+        await fetch('/api/ssh/send', { method: 'POST', body: formData });
+    } catch (e) {
+        console.error('send cmd error', e);
+    }
+}
+
+function sendSSHInput() {
+    const input = document.getElementById('sshCommandInput');
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    appendTerminal('$ ' + cmd + '\n');
+    sendSSHCmd(cmd);
+    input.value = '';
+}
+
+function startSSHPoll() {
+    if (sshPollInterval) clearInterval(sshPollInterval);
+    sshPollInterval = setInterval(async () => {
+        if (!sshConnected) return;
+        try {
+            const res = await fetch(`/api/ssh/output?task_id=${taskId}`);
+            const data = await res.json();
+            if (data.success && data.output) {
+                processAutoLabelLogOutput(data.output);
+                processRetestLogOutput(data.output);
+                appendTerminal(data.output);
+            }
+            if (!data.connected) {
+                sshStatus.textContent = '已断开';
+                sshStatus.classList.remove('connected');
+            }
+        } catch (e) {
+            console.error('poll error', e);
+        }
+    }, 500);
+}
+
+// ========== 终端放大Modal ==========
+const terminalModal = document.getElementById('terminalModal');
+const sshTerminalModal = document.getElementById('sshTerminalModal');
+
+function openTerminalModal() {
+    // 同步当前终端内容
+    sshTerminalModal.innerHTML = sshTerminal.innerHTML;
+    terminalModal.style.display = 'flex';
+    // 根据连接状态显示/隐藏命令输入行
+    const modalFooter = document.getElementById('terminalModalFooter');
+    if (modalFooter) modalFooter.style.display = sshConnected ? 'flex' : 'none';
+    // 滚动到底部
+    setTimeout(() => {
+        sshTerminalModal.scrollTop = sshTerminalModal.scrollHeight;
+        if (sshConnected) document.getElementById('sshCommandInputModal').focus();
+    }, 10);
+}
+
+function closeTerminalModal() {
+    terminalModal.style.display = 'none';
+}
+
+function sendSSHInputModal() {
+    const input = document.getElementById('sshCommandInputModal');
+    const cmd = input.value.trim();
+    if (!cmd) return;
+    appendTerminal('$ ' + cmd + '\n');
+    sendSSHCmd(cmd);
+    input.value = '';
+}
+
+terminalModal.addEventListener('click', (e) => {
+    if (e.target === terminalModal) closeTerminalModal();
+});
+
+// 重写appendTerminal，同时同步到modal
+const _originalAppendTerminal = appendTerminal;
+appendTerminal = function(text) {
+    _originalAppendTerminal(text);
+    if (terminalModal.style.display === 'flex' && sshTerminalModal) {
+        const span = document.createElement('span');
+        span.textContent = text;
+        sshTerminalModal.appendChild(span);
+        sshTerminalModal.scrollTop = sshTerminalModal.scrollHeight;
+    }
+};
+
+// ========== 初始化 ==========
+if (window.name !== CURRENT_TASK_WINDOW_NAME) {
+    window.name = CURRENT_TASK_WINDOW_NAME;
+}
+registerCurrentTask();
+startCurrentTaskHeartbeat();
+window.addEventListener('storage', handleCurrentTaskFocusRequest);
+window.addEventListener('beforeunload', () => {
+    if (currentTaskHeartbeatTimer) {
+        clearInterval(currentTaskHeartbeatTimer);
+        currentTaskHeartbeatTimer = null;
+    }
+});
+
+if (timestamps.length > 0) {
+    updateCurrentFile(0);
+}
+updateStatsSummary();
+
+if (btnRetestAll) {
+    btnRetestAll.addEventListener('click', runRetestAll);
+    if (btnRetestRestart) btnRetestRestart.addEventListener('click', restartRetestAll);
+    updateRetestStatus();
+}
+
+// 键盘快捷键
+document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+    if (e.code === 'Space') {
+        e.preventDefault();
+        btnPlay.click();
+    } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        audio.currentTime = Math.max(0, audio.currentTime - 3);
+    } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 3);
+    } else if (e.code === 'KeyM') {
+        e.preventDefault();
+        if (btnMark) btnMark.click();
+    } else if (e.code === 'KeyF' && taskType === 'voiceprint') {
+        e.preventDefault();
+        markCurrentFile('FP');
+    } else if (e.code === 'KeyN' && taskType === 'voiceprint') {
+        e.preventDefault();
+        markCurrentFile('FN');
+    }
+});
+</script>
+{% endblock %}
+

@@ -1,0 +1,404 @@
+{% extends "base.html" %}
+
+{% block title %}Badcase管理 - AudioLab{% endblock %}
+
+{% block head %}
+<style>
+.badcase-groups {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+}
+
+.badcase-group-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--shadow);
+    overflow: hidden;
+}
+
+.badcase-group-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 18px;
+    cursor: pointer;
+    background: #fbfdff;
+}
+
+.badcase-group-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+}
+
+.badcase-group-header-right {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.group-toggle {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: var(--bg);
+    color: var(--text-muted);
+    font-size: 12px;
+    cursor: pointer;
+    flex: 0 0 auto;
+}
+
+.group-select-btn,
+.item-select-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    background: white;
+    color: transparent;
+    cursor: pointer;
+    flex: 0 0 auto;
+    position: relative;
+}
+
+.group-select-btn.selected,
+.item-select-btn.selected {
+    background: #ecfdf3;
+    border-color: var(--primary);
+}
+
+.group-select-btn.selected::after,
+.item-select-btn.selected::after {
+    content: '';
+    width: 10px;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--primary);
+    position: absolute;
+    inset: 0;
+    margin: auto;
+}
+
+.badcase-group-title {
+    font-size: 16px;
+    font-weight: 600;
+    min-width: 0;
+    word-break: break-all;
+}
+
+.badcase-group-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 4px;
+}
+
+.badcase-group-body {
+    border-top: 1px solid var(--border);
+    padding: 0 18px 18px;
+}
+
+.badcase-group-body.collapsed {
+    display: none;
+}
+
+.badcase-group-items {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    padding-top: 16px;
+}
+
+.badcase-row {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+}
+
+.badcase-row-main {
+    flex: 1;
+    min-width: 0;
+}
+
+.badcase-item-inline {
+    margin: 0;
+}
+
+.badcase-group-summary {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.filter-bar .filter-grow {
+    flex: 1;
+    min-width: 180px;
+}
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Badcase管理</h1>
+    <div class="filter-actions">
+        <button class="btn" id="btnToggleSelectAll">一键全选</button>
+        <button class="btn btn-primary" id="btnExportSelected">导出选中CSV</button>
+    </div>
+</div>
+
+<div class="filter-bar">
+    <div class="filter-group filter-grow">
+        <label for="searchInput">搜索项目 / 文件名</label>
+        <input type="text" id="searchInput" placeholder="输入项目名或文件名">
+    </div>
+    <div class="filter-group">
+        <label for="distanceFilter">距离</label>
+        <select id="distanceFilter">
+            <option value="">全部</option>
+            {% for item in distances %}
+            <option value="{{ item }}">{{ item }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filter-group">
+        <label for="angleFilter">角度</label>
+        <select id="angleFilter">
+            <option value="">全部</option>
+            {% for item in angles %}
+            <option value="{{ item }}">{{ item }}</option>
+            {% endfor %}
+        </select>
+    </div>
+</div>
+
+{% if badcase_groups %}
+<div class="badcase-groups" id="badcaseGroups">
+    {% for group in badcase_groups %}
+    <section class="badcase-group-card"
+             data-task-id="{{ group.task_id }}"
+             data-task-name="{{ group.task_name }}"
+             data-task-type="{{ group.task_type }}">
+        <div class="badcase-group-header" data-toggle-group>
+            <div class="badcase-group-header-left">
+                <button class="group-toggle" type="button" data-group-toggle>▶</button>
+                <button class="group-select-btn selected"
+                        type="button"
+                        data-group-select
+                        aria-label="切换项目选中"></button>
+                <div>
+                    <div class="badcase-group-title">{{ group.task_name }}</div>
+                    <div class="badcase-group-meta">
+                        <span class="env-tag">{{ group.task_type == 'voiceprint' and '声纹' or '唤醒' }}</span>
+                        <span class="env-tag">{{ group.total_files }} 条音频</span>
+                        <span class="env-tag">{{ group.environment.distance }}</span>
+                        <span class="env-tag">{{ group.environment.angle }}</span>
+                        <span class="env-tag">{{ group.environment.noise_level }}</span>
+                    </div>
+                </div>
+            </div>
+            <div class="badcase-group-header-right">
+                <span class="badge badge-warning">{{ group.badcase_items|length }} 条 badcase</span>
+                <span class="task-time">{{ group.create_time }}</span>
+            </div>
+        </div>
+        <div class="badcase-group-body collapsed" data-group-body>
+            <div class="badcase-group-items">
+                {% for item in group.badcase_items %}
+                <div class="badcase-row"
+                     data-item-row
+                     data-selected-key="{{ item.selected_key }}"
+                     data-task-id="{{ item.task_id }}"
+                     data-distance="{{ item.environment.distance }}"
+                     data-angle="{{ item.environment.angle }}"
+                     data-filename="{{ item.filename }}">
+                    <button class="item-select-btn selected"
+                            type="button"
+                            data-item-select
+                            aria-label="切换条目选中"></button>
+                    <div class="badcase-row-main">
+                        <div class="badcase-item badcase-item-inline">
+                            <div class="badcase-header">
+                                <span class="badcase-id">#{{ item.id }}{% if item.error_type %} · {{ item.error_type }}{% endif %}</span>
+                                <span class="badcase-time">{{ item.mark_time }}</span>
+                            </div>
+                            <div class="badcase-file">{{ item.filename }}</div>
+                            <div class="badcase-range">{{ "%.2f"|format(item.start_time) }}s - {{ "%.2f"|format(item.end_time) }}s</div>
+                            {% if item.note %}
+                            <div class="badcase-note">{{ item.note }}</div>
+                            {% endif %}
+                            <div class="badcase-actions">
+                                <a class="btn btn-small" href="/player/{{ item.task_id }}">打开任务</a>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+        </div>
+    </section>
+    {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+    <div class="empty-icon">📭</div>
+    <h2>暂无 badcase</h2>
+    <p>当前没有可管理的 badcase 记录。</p>
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+const searchInput = document.getElementById('searchInput');
+const distanceFilter = document.getElementById('distanceFilter');
+const angleFilter = document.getElementById('angleFilter');
+const btnToggleSelectAll = document.getElementById('btnToggleSelectAll');
+const btnExportSelected = document.getElementById('btnExportSelected');
+const groupCards = Array.from(document.querySelectorAll('.badcase-group-card'));
+
+function getAllItemRows() {
+    return Array.from(document.querySelectorAll('[data-item-row]'));
+}
+
+function isRowSelected(row) {
+    const btn = row.querySelector('[data-item-select]');
+    return !!btn && btn.classList.contains('selected');
+}
+
+function setRowSelected(row, selected) {
+    const btn = row.querySelector('[data-item-select]');
+    if (!btn) return;
+    btn.classList.toggle('selected', selected);
+}
+
+function getVisibleRows() {
+    return getAllItemRows().filter(row => row.style.display !== 'none');
+}
+
+function updateGroupSelectState(card) {
+    const rows = Array.from(card.querySelectorAll('[data-item-row]')).filter(row => row.style.display !== 'none');
+    const btn = card.querySelector('[data-group-select]');
+    if (!btn) return;
+    const allSelected = rows.length > 0 && rows.every(isRowSelected);
+    btn.classList.toggle('selected', allSelected);
+}
+
+function updateSelectAllButtonState() {
+    const visibleRows = getVisibleRows();
+    const allSelected = visibleRows.length > 0 && visibleRows.every(isRowSelected);
+    btnToggleSelectAll.textContent = allSelected ? '全部取消' : '一键全选';
+}
+
+function applyFilters() {
+    const keyword = (searchInput.value || '').trim().toLowerCase();
+    const distance = distanceFilter.value;
+    const angle = angleFilter.value;
+
+    groupCards.forEach(card => {
+        const taskName = (card.dataset.taskName || '').toLowerCase();
+        const rows = Array.from(card.querySelectorAll('[data-item-row]'));
+        let visibleCount = 0;
+
+        rows.forEach(row => {
+            const filename = (row.dataset.filename || '').toLowerCase();
+            const matchKeyword = !keyword || taskName.includes(keyword) || filename.includes(keyword);
+            const matchDistance = !distance || row.dataset.distance === distance;
+            const matchAngle = !angle || row.dataset.angle === angle;
+            const visible = matchKeyword && matchDistance && matchAngle;
+            row.style.display = visible ? 'flex' : 'none';
+            if (visible) {
+                setRowSelected(row, true);
+                visibleCount += 1;
+            }
+        });
+
+        card.style.display = visibleCount > 0 ? 'block' : 'none';
+        updateGroupSelectState(card);
+    });
+
+    updateSelectAllButtonState();
+}
+
+function toggleGroup(card, forceExpand = null) {
+    const body = card.querySelector('[data-group-body]');
+    const toggle = card.querySelector('[data-group-toggle]');
+    if (!body || !toggle) return;
+    const expanded = forceExpand === null ? body.classList.contains('collapsed') : forceExpand;
+    body.classList.toggle('collapsed', !expanded);
+    toggle.textContent = expanded ? '▼' : '▶';
+}
+
+function exportSelected() {
+    const selected = getAllItemRows()
+        .filter(isRowSelected)
+        .map(row => row.dataset.selectedKey)
+        .filter(Boolean);
+
+    if (selected.length === 0) {
+        alert('请先选择要导出的 badcase。');
+        return;
+    }
+
+    const params = new URLSearchParams();
+    const distance = distanceFilter.value;
+    const angle = angleFilter.value;
+    if (distance) params.append('distance', distance);
+    if (angle) params.append('angle', angle);
+    selected.forEach(value => params.append('selected', value));
+
+    window.location.href = `/api/export/badcases?${params.toString()}`;
+}
+
+groupCards.forEach(card => {
+    card.querySelector('[data-toggle-group]')?.addEventListener('click', (event) => {
+        if (event.target.closest('[data-group-select]')) return;
+        toggleGroup(card);
+    });
+
+    card.querySelector('[data-group-select]')?.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const rows = Array.from(card.querySelectorAll('[data-item-row]')).filter(row => row.style.display !== 'none');
+        const allSelected = rows.length > 0 && rows.every(isRowSelected);
+        rows.forEach(row => setRowSelected(row, !allSelected));
+        updateGroupSelectState(card);
+        updateSelectAllButtonState();
+    });
+
+    Array.from(card.querySelectorAll('[data-item-select]')).forEach(btn => {
+        btn.addEventListener('click', (event) => {
+            event.stopPropagation();
+            const row = btn.closest('[data-item-row]');
+            if (!row) return;
+            setRowSelected(row, !isRowSelected(row));
+            updateGroupSelectState(card);
+            updateSelectAllButtonState();
+        });
+    });
+});
+
+searchInput?.addEventListener('input', applyFilters);
+distanceFilter?.addEventListener('change', applyFilters);
+angleFilter?.addEventListener('change', applyFilters);
+
+btnToggleSelectAll?.addEventListener('click', () => {
+    const visibleRows = getVisibleRows();
+    const allSelected = visibleRows.length > 0 && visibleRows.every(isRowSelected);
+    visibleRows.forEach(row => setRowSelected(row, !allSelected));
+    groupCards.forEach(updateGroupSelectState);
+    updateSelectAllButtonState();
+});
+
+btnExportSelected?.addEventListener('click', exportSelected);
+
+groupCards.forEach(card => {
+    toggleGroup(card, false);
+    updateGroupSelectState(card);
+});
+applyFilters();
+</script>
+{% endblock %}

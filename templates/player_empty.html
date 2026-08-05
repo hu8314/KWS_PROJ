@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block title %}目前没有任务 - AudioLab{% endblock %}
+
+{% block content %}
+<div class="current-task-empty-page">
+    <section class="empty-state current-task-empty" aria-labelledby="currentTaskEmptyTitle">
+        <div class="empty-mark">AL</div>
+        <h1 id="currentTaskEmptyTitle">目前没有任务</h1>
+        <p>当前任务已被删除或不存在。</p>
+        <div class="empty-actions">
+            <a class="btn btn-primary" href="/">返回任务管理</a>
+            <a class="btn" href="/upload">创建任务</a>
+        </div>
+    </section>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+if (window.AudioLabCurrentTask) {
+    window.AudioLabCurrentTask.clear();
+}
+</script>
+{% endblock %}

@@ -1,0 +1,359 @@
+{% extends "base.html" %}
+
+{% block title %}上传音频 - KWS测试工具{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1><span class="title-icon">UP</span> 上传并合成音频</h1>
+</div>
+
+<div class="upload-container">
+    <div class="upload-section">
+        <div class="tabs">
+            <button class="tab-btn active" data-tab="uploadTab" onclick="switchTab('uploadTab')">📁 上传新文件</button>
+            <button class="tab-btn" data-tab="datasetTab" onclick="switchTab('datasetTab')">🗄️ 选择已有数据集</button>
+        </div>
+        
+        <div id="uploadTab" class="tab-content active">
+            <div class="drop-zone" id="dropZone">
+                <div class="drop-icon">📁</div>
+                <p>拖拽文件到此处，或 <span class="link">点击选择</span></p>
+                <p class="hint">支持 ZIP 压缩包 或 多个 WAV 文件</p>
+                <input type="file" id="fileInput" accept=".zip,.wav" multiple hidden>
+            </div>
+            <div class="file-list" id="fileList"></div>
+        </div>
+        
+        <div id="datasetTab" class="tab-content">
+            <div class="dataset-select-area" id="datasetSelectArea">
+                <p class="hint">正在加载数据集列表...</p>
+            </div>
+        </div>
+    </div>
+
+    <div class="config-section">
+        <h3>⚙️ 合成参数</h3>
+        <div class="form-group">
+            <label>任务名称</label>
+            <input type="text" id="taskName" placeholder="输入任务名称" value="">
+        </div>
+        <div class="form-group">
+            <label>任务类型</label>
+            <select id="taskType">
+                <option value="wake">唤醒</option>
+                <option value="voiceprint">声纹识别</option>
+            </select>
+        </div>
+        <div class="form-row" id="voiceprintCounts" style="display:none;">
+            <div class="form-group">
+                <label>库内条数</label>
+                <input type="number" id="voiceprintInCount" value="10" min="0">
+            </div>
+            <div class="form-group">
+                <label>库外条数</label>
+                <input type="number" id="voiceprintOutCount" value="10" min="0">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>音频间隔 (秒)</label>
+                <input type="number" id="silenceDuration" value="3" min="0" max="60">
+            </div>
+            <div class="form-group">
+                <label>采样率 (Hz)</label>
+                <input type="number" id="sampleRate" value="16000" min="8000" max="48000">
+            </div>
+        </div>
+        <div class="form-row">
+            <div class="form-group">
+                <label>位深 (bit)</label>
+                <input type="number" id="bitDepth" value="16" min="8" max="32">
+            </div>
+            <div class="form-group">
+                <label>声道数</label>
+                <input type="number" id="channels" value="1" min="1" max="2">
+            </div>
+        </div>
+
+        <h3>🌍 测试环境</h3>
+        <div class="form-row">
+            <div class="form-group">
+                <label>测试距离</label>
+                <div class="editable-select" data-options='{{ distances | tojson }}'>
+                    <input type="text" id="distance" value="3m" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle distance options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+            <div class="form-group">
+                <label>测试角度</label>
+                <div class="editable-select" data-options='{{ angles | tojson }}'>
+                    <input type="text" id="angle" value="90°" autocomplete="off">
+                    <button type="button" class="editable-select-toggle" aria-label="Toggle angle options">&#9662;</button>
+                    <div class="editable-select-menu"></div>
+                </div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>噪音等级</label>
+            <div class="editable-select" data-options='{{ noise_levels | tojson }}'>
+                <input type="text" id="noiseLevel" value="{{ noise_levels[0] }}" autocomplete="off">
+                <button type="button" class="editable-select-toggle" aria-label="Toggle noise level options">&#9662;</button>
+                <div class="editable-select-menu"></div>
+            </div>
+        </div>
+
+        <div class="preview-info" id="previewInfo" style="display:none;">
+            <p>预计合成 <strong id="previewCount">0</strong> 个文件</p>
+            <p>预计总时长约 <strong id="previewDuration">0</strong> 秒</p>
+        </div>
+
+        <button class="btn btn-primary btn-block" id="startBtn" disabled>
+            🚀 开始合成
+        </button>
+        <div class="progress-bar" id="progressBar" style="display:none;">
+            <div class="progress-fill" id="progressFill"></div>
+            <span class="progress-text" id="progressText">0%</span>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+const dropZone = document.getElementById('dropZone');
+const fileInput = document.getElementById('fileInput');
+const fileList = document.getElementById('fileList');
+const startBtn = document.getElementById('startBtn');
+const progressBar = document.getElementById('progressBar');
+const progressFill = document.getElementById('progressFill');
+const progressText = document.getElementById('progressText');
+const previewInfo = document.getElementById('previewInfo');
+const previewCount = document.getElementById('previewCount');
+const previewDuration = document.getElementById('previewDuration');
+const datasetSelectArea = document.getElementById('datasetSelectArea');
+const taskTypeSelect = document.getElementById('taskType');
+const voiceprintCounts = document.getElementById('voiceprintCounts');
+
+let selectedFiles = [];
+let selectedDatasetId = null;
+let availableDatasets = [];
+
+function updateVoiceprintCountVisibility() {
+    voiceprintCounts.style.display = taskTypeSelect.value === 'voiceprint' ? 'flex' : 'none';
+}
+
+taskTypeSelect.addEventListener('change', updateVoiceprintCountVisibility);
+updateVoiceprintCountVisibility();
+
+// 点击上传
+dropZone.addEventListener('click', () => fileInput.click());
+
+// 文件选择
+fileInput.addEventListener('change', (e) => {
+    handleFiles(e.target.files);
+});
+
+// 拖拽上传
+dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+});
+dropZone.addEventListener('dragleave', () => {
+    dropZone.classList.remove('dragover');
+});
+dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    handleFiles(e.dataTransfer.files);
+});
+
+function handleFiles(files) {
+    selectedFiles = Array.from(files);
+    updateFileList();
+}
+
+function updateFileList() {
+    if (selectedFiles.length === 0) {
+        fileList.innerHTML = '';
+        startBtn.disabled = true;
+        previewInfo.style.display = 'none';
+        return;
+    }
+
+    let html = '<h4>已选择文件</h4><ul>';
+    let wavCount = 0;
+    let hasZip = false;
+    
+    selectedFiles.forEach(f => {
+        const isWav = f.name.toLowerCase().endsWith('.wav');
+        const isZip = f.name.toLowerCase().endsWith('.zip');
+        if (isWav) wavCount++;
+        if (isZip) hasZip = true;
+        const icon = isZip ? 'ZIP' : (isWav ? 'WAV' : 'FILE');
+        html += `<li>${icon} ${f.name} <small>(${(f.size/1024/1024).toFixed(2)} MB)</small></li>`;
+    });
+    html += '</ul>';
+    fileList.innerHTML = html;
+    
+    // 预估
+    const silence = parseInt(document.getElementById('silenceDuration').value) || 3;
+    previewCount.textContent = hasZip ? '若干' : wavCount;
+    previewDuration.textContent = hasZip ? '未知' : (wavCount * (2 + silence));
+    previewInfo.style.display = 'block';
+    startBtn.disabled = false;
+}
+
+// ===== 标签页切换 =====
+async function switchTab(tabId) {
+    document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+    document.querySelector(`.tab-btn[data-tab="${tabId}"]`).classList.add('active');
+    document.getElementById(tabId).classList.add('active');
+    
+    if (tabId === 'datasetTab') {
+        await loadDatasets();
+        updateStartButton();
+    } else {
+        updateStartButton();
+    }
+}
+
+async function loadDatasets() {
+    if (availableDatasets.length > 0) return;
+    try {
+        const res = await fetch('/api/datasets');
+        const data = await res.json();
+        availableDatasets = data.datasets || [];
+        renderDatasetList();
+    } catch (e) {
+        datasetSelectArea.innerHTML = `<p class="hint" style="color:var(--danger)">加载失败: ${e.message}</p>`;
+    }
+}
+
+function renderDatasetList() {
+    if (availableDatasets.length === 0) {
+        datasetSelectArea.innerHTML = `
+            <div class="empty-state" style="padding:40px 20px;">
+                <div class="empty-icon" style="font-size:40px;">🗄️</div>
+                <p>暂无数据集</p>
+                <a href="/datasets" class="btn btn-primary" style="margin-top:12px;">去上传数据集</a>
+            </div>`;
+        return;
+    }
+    
+    let html = '<div class="dataset-list-select">';
+    availableDatasets.forEach(ds => {
+        html += `
+            <div class="dataset-option" data-id="${ds.dataset_id}" onclick="selectDataset('${ds.dataset_id}')">
+                <div class="dataset-option-name">${ds.dataset_name}</div>
+                <div class="dataset-option-meta">${ds.total_files} 个文件 · ${ds.create_time}</div>
+            </div>
+        `;
+    });
+    html += '</div>';
+    datasetSelectArea.innerHTML = html;
+}
+
+function selectDataset(datasetId) {
+    selectedDatasetId = datasetId;
+    document.querySelectorAll('.dataset-option').forEach(el => {
+        el.classList.toggle('selected', el.dataset.id === datasetId);
+    });
+    
+    const ds = availableDatasets.find(d => d.dataset_id === datasetId);
+    if (ds) {
+        previewCount.textContent = ds.total_files;
+        const silence = parseInt(document.getElementById('silenceDuration').value) || 3;
+        previewDuration.textContent = ds.total_files * (2 + silence);
+        previewInfo.style.display = 'block';
+    }
+    updateStartButton();
+}
+
+function updateStartButton() {
+    const activeTab = document.querySelector('.tab-content.active').id;
+    if (activeTab === 'uploadTab') {
+        startBtn.disabled = selectedFiles.length === 0;
+    } else {
+        startBtn.disabled = !selectedDatasetId;
+    }
+}
+
+startBtn.addEventListener('click', async () => {
+    const activeTab = document.querySelector('.tab-content.active').id;
+    
+    startBtn.disabled = true;
+    progressBar.style.display = 'block';
+    progressFill.style.width = '50%';
+    progressText.textContent = '合成中...';
+    
+    const commonParams = {
+        task_name: document.getElementById('taskName').value || `测试任务_${new Date().toLocaleString()}`,
+        task_type: taskTypeSelect.value,
+        voiceprint_in_count: document.getElementById('voiceprintInCount').value,
+        voiceprint_out_count: document.getElementById('voiceprintOutCount').value,
+        silence_duration: document.getElementById('silenceDuration').value,
+        sample_rate: document.getElementById('sampleRate').value,
+        bit_depth: document.getElementById('bitDepth').value,
+        channels: document.getElementById('channels').value,
+        distance: document.getElementById('distance').value,
+        angle: document.getElementById('angle').value,
+        noise_level: document.getElementById('noiseLevel').value
+    };
+    
+    try {
+        let res;
+        if (activeTab === 'uploadTab') {
+            // 上传新文件模式
+            if (selectedFiles.length === 0) return;
+            const formData = new FormData();
+            selectedFiles.forEach(f => formData.append('files', f));
+            Object.entries(commonParams).forEach(([k, v]) => formData.append(k, v));
+            res = await fetch('/api/upload', { method: 'POST', body: formData });
+        } else {
+            // 选择已有数据集模式
+            if (!selectedDatasetId) return;
+            const formData = new FormData();
+            formData.append('dataset_id', selectedDatasetId);
+            Object.entries(commonParams).forEach(([k, v]) => formData.append(k, v));
+            res = await fetch('/api/tasks/from-dataset', { method: 'POST', body: formData });
+        }
+        
+        const data = await res.json();
+        
+        if (data.success) {
+            progressFill.style.width = '100%';
+            progressText.textContent = '完成!';
+            setTimeout(() => {
+                if (window.AudioLabCurrentTask) {
+                    window.AudioLabCurrentTask.set({
+                        taskId: data.task_id,
+                        taskName: data.task ? data.task.task_name : commonParams.task_name,
+                        url: `/player/${data.task_id}`,
+                        updatedAt: Date.now()
+                    });
+                    window.open(`/player/${data.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
+                } else {
+                    window.location.href = `/player/${data.task_id}`;
+                }
+            }, 500);
+        } else {
+            alert('合成失败: ' + (data.detail || '未知错误'));
+            startBtn.disabled = false;
+            progressBar.style.display = 'none';
+        }
+    } catch (e) {
+        alert('上传失败: ' + e.message);
+        startBtn.disabled = false;
+        progressBar.style.display = 'none';
+    }
+});
+
+// 参数变化时更新预估
+document.getElementById('silenceDuration').addEventListener('change', () => {
+    if (selectedFiles.length > 0) updateFileList();
+    if (selectedDatasetId) selectDataset(selectedDatasetId);
+});
+</script>
+{% endblock %}

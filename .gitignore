@@ -1,0 +1,18 @@
+# Runtime data: keep only directory placeholders in Git.
+tasks/*
+!tasks/.gitkeep
+datasets/*
+!datasets/.gitkeep
+uploads/
+
+# Build and local development artifacts.
+build/
+dist/
+__pycache__/
+*.py[cod]
+.venv/
+.idea/
+
+# Logs and temporary render output.
+*.log
+tmp_index_rendered.html
