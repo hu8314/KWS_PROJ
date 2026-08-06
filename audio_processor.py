@@ -282,6 +282,14 @@ def delete_badcase(task_dir: str, badcase_id: int) -> bool:
     return False
 
 
+def clear_badcases(task_dir: str) -> int:
+    """清空badcase记录，返回删除数量"""
+    badcases = load_badcases(task_dir)
+    count = len(badcases)
+    save_badcases(task_dir, [])
+    return count
+
+
 def update_badcase_note(task_dir: str, badcase_id: int, note: str) -> bool:
     """更新badcase备注"""
     badcases = load_badcases(task_dir)

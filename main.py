@@ -31,7 +31,7 @@ from fastapi.templating import Jinja2Templates
 from audio_processor import (
     generate_task_id, extract_zip, list_wav_files, create_task,
     load_task_config, load_timestamps, load_badcases, add_badcase,
-    delete_badcase, update_badcase_note, update_task_environment, update_task_name,
+    delete_badcase, clear_badcases, update_badcase_note, update_task_environment, update_task_name,
     delete_task, get_all_tasks, export_badcases_to_csv,
     create_dataset, load_dataset_meta, delete_dataset,
     get_all_datasets, get_dataset_file_paths,
@@ -423,6 +423,16 @@ async def api_delete_badcase(task_id: str, badcase_id: int):
     if delete_badcase(task_dir, badcase_id):
         return JSONResponse(content={"success": True})
     raise HTTPException(status_code=404, detail="badcase不存在")
+
+
+@app.delete("/api/tasks/{task_id}/badcases")
+async def api_clear_badcases(task_id: str):
+    """清空当前任务的全部badcase"""
+    task_dir = str(TASKS_DIR / task_id)
+    if not load_task_config(task_dir):
+        raise HTTPException(status_code=404, detail="任务不存在")
+    deleted_count = clear_badcases(task_dir)
+    return JSONResponse(content={"success": True, "deleted_count": deleted_count})
 
 
 @app.put("/api/tasks/{task_id}/badcases/{badcase_id}")

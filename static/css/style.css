@@ -669,6 +669,33 @@ body {
     border-bottom: 1px solid var(--border);
 }
 
+.badcase-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: nowrap;
+    margin-bottom: 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--border);
+}
+
+.badcase-panel-header h3 {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    border-bottom: 0;
+    min-width: 0;
+    flex: 1 1 auto;
+    white-space: nowrap;
+}
+
+.btn-clear-badcases {
+    flex-shrink: 0;
+    padding: 4px 8px;
+    font-size: 11px;
+    white-space: nowrap;
+}
+
 .file-search input {
     width: 100%;
     padding: 8px 12px;
@@ -950,16 +977,18 @@ body {
 
 /* 连接表单 - 精致卡片式 */
 .ssh-connect-form {
-    padding: 14px 16px 16px;
-    display: flex;
-    flex-direction: column;
+    padding: 12px 14px 14px;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
     gap: 12px;
+    align-items: end;
 }
 
 .ssh-form-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px 12px;
+    grid-template-columns: minmax(180px, 1.3fr) 82px minmax(110px, 0.8fr) minmax(140px, 0.9fr);
+    gap: 10px;
+    min-width: 0;
 }
 
 .ssh-field {
@@ -976,7 +1005,8 @@ body {
 }
 
 .ssh-field input {
-    padding: 8px 12px;
+    height: 40px;
+    padding: 7px 12px;
     border: 1px solid #cbd5e1;
     border-radius: var(--radius);
     background: #ffffff;
@@ -1002,15 +1032,17 @@ body {
 
 .ssh-form-actions {
     display: flex;
-    justify-content: center;
-    padding-top: 2px;
+    justify-content: flex-end;
+    padding-top: 0;
 }
 
 .ssh-form-actions .btn {
-    padding: 9px 28px;
+    height: 40px;
+    padding: 0 22px;
     font-size: 14px;
     font-weight: 500;
     border-radius: var(--radius);
+    white-space: nowrap;
 }
 
 /* 工具栏 */
@@ -1243,21 +1275,21 @@ body {
 
 /* 标记区域 */
 .mark-section {
-    position: sticky;
-    bottom: 0;
-    z-index: 4;
-    margin-top: 8px;
-    padding: 12px 0 2px;
-    border-top: 1px solid var(--border);
-    background: var(--card);
+    margin: 6px 0 8px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    background: #f8fafc;
+    flex-shrink: 0;
 }
 
 .current-file {
-    background: #f8fafc;
-    padding: 10px 14px;
+    background: #ffffff;
+    padding: 8px 10px;
     border-radius: var(--radius);
-    margin-bottom: 12px;
+    margin-bottom: 8px;
     font-size: 13px;
+    border: 1px solid var(--border);
 }
 
 .current-file .label {
@@ -1273,6 +1305,13 @@ body {
     color: var(--text-muted);
 }
 
+.mark-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 190px;
+    gap: 8px;
+    align-items: stretch;
+}
+
 .mark-form textarea {
     width: 100%;
     padding: 10px;
@@ -1280,7 +1319,17 @@ body {
     border-radius: var(--radius);
     font-size: 13px;
     resize: vertical;
-    margin-bottom: 8px;
+    min-height: 46px;
+    max-height: 76px;
+    margin-bottom: 0;
+}
+
+.mark-form .btn-block {
+    min-height: 46px;
+    height: 100%;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-weight: 700;
 }
 
 .voiceprint-mark-actions {
@@ -1471,7 +1520,23 @@ body {
 /* ========== 响应式 ========== */
 @media (max-width: 1200px) {
     .player-layout {
-        grid-template-columns: 240px 1fr 240px;
+        grid-template-columns: 220px 1fr 220px;
+    }
+
+    .ssh-connect-form {
+        grid-template-columns: 1fr;
+    }
+
+    .ssh-form-grid {
+        grid-template-columns: 1fr 90px 1fr 1fr;
+    }
+
+    .ssh-form-actions {
+        justify-content: stretch;
+    }
+
+    .ssh-form-actions .btn {
+        width: 100%;
     }
 }
 
@@ -2323,4 +2388,302 @@ body {
 .terminal-modal-footer input:focus,
 .dataset-option.selected {
     box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12) !important;
+}
+
+/* ========== Compact player workspace ========== */
+body:has(.player-page) .main-content {
+    max-width: 1280px;
+    padding: 14px 20px 16px;
+}
+
+body:has(.player-page) .navbar {
+    height: 48px;
+    padding: 0 18px;
+}
+
+body:has(.player-page) .nav-brand {
+    font-size: 17px;
+    gap: 8px;
+}
+
+body:has(.player-page) .nav-menu a {
+    padding: 6px 12px;
+    font-size: 14px;
+}
+
+.player-page {
+    height: calc(100vh - 76px);
+}
+
+.player-header {
+    margin-bottom: 8px;
+}
+
+.player-header h1 {
+    margin-bottom: 6px;
+    font-size: 18px;
+}
+
+.player-header .env-tags {
+    gap: 6px;
+}
+
+.player-header .env-tag {
+    padding: 3px 8px;
+    font-size: 11px;
+}
+
+.stats-bar {
+    gap: 18px;
+    padding: 10px 16px;
+    margin-bottom: 14px;
+    border-radius: 10px;
+}
+
+.stat-item {
+    min-width: 54px;
+}
+
+.stat-label {
+    font-size: 10px;
+}
+
+.stat-value {
+    font-size: 16px;
+}
+
+.player-layout {
+    grid-template-columns: 240px minmax(0, 1fr) 240px;
+    gap: 12px;
+}
+
+.file-panel,
+.badcase-panel {
+    padding: 12px;
+    border-radius: 10px;
+}
+
+.player-panel {
+    padding: 10px 12px;
+    border-radius: 10px;
+    gap: 3px;
+}
+
+.file-panel h3,
+.badcase-panel h3 {
+    margin-bottom: 9px;
+    padding-bottom: 7px;
+    font-size: 13px;
+}
+
+.badcase-panel-header {
+    gap: 6px;
+    margin-bottom: 9px;
+    padding-bottom: 7px;
+}
+
+.badcase-panel-header h3 {
+    margin-bottom: 0;
+    padding-bottom: 0;
+    white-space: nowrap;
+}
+
+.btn-clear-badcases {
+    padding: 3px 6px;
+    font-size: 10px;
+}
+
+.file-search input {
+    padding: 7px 10px;
+    margin-bottom: 7px;
+    font-size: 12px;
+}
+
+.file-item {
+    gap: 8px;
+    padding: 7px 8px;
+}
+
+.file-index {
+    width: 22px;
+    height: 22px;
+    font-size: 10px;
+}
+
+.file-name {
+    font-size: 11px;
+}
+
+.file-time {
+    font-size: 10px;
+}
+
+.ssh-section {
+    flex-basis: 210px;
+    min-height: 160px;
+    max-height: 34%;
+    border-radius: 10px;
+}
+
+.ssh-section.ssh-connected {
+    flex-basis: 300px;
+    min-height: 260px;
+    max-height: 48%;
+}
+
+.ssh-header {
+    padding: 8px 12px;
+}
+
+.ssh-header h3 {
+    font-size: 13px;
+}
+
+.ssh-toolbar {
+    gap: 5px;
+    padding: 7px 12px;
+}
+
+.ssh-cmd-btn {
+    padding: 4px 9px;
+    font-size: 11px;
+}
+
+.ssh-connect-form {
+    padding: 10px 12px 12px;
+    gap: 10px;
+}
+
+.ssh-field label {
+    font-size: 11px;
+}
+
+.ssh-field input,
+.ssh-form-actions .btn {
+    height: 36px;
+    font-size: 12px;
+}
+
+.ssh-input-line {
+    padding: 7px 12px;
+}
+
+.ssh-input-line input {
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+.panel-resizer {
+    height: 7px;
+    flex-basis: 7px;
+    margin: 1px 0 3px;
+}
+
+.player-controls {
+    gap: 8px;
+    margin-bottom: 2px;
+}
+
+.icon-ctrl {
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+}
+
+.ctrl-icon {
+    width: 21px;
+    height: 21px;
+}
+
+.progress-container {
+    gap: 9px;
+    margin-bottom: 3px;
+}
+
+.progress-track {
+    height: 7px;
+}
+
+.time-current,
+.time-total {
+    min-width: 36px;
+    font-size: 11px;
+}
+
+.mark-section {
+    margin: 5px 0 7px;
+    padding: 8px;
+    border-radius: 10px;
+}
+
+.current-file {
+    padding: 7px 9px;
+    margin-bottom: 7px;
+    font-size: 12px;
+}
+
+.mark-form {
+    grid-template-columns: minmax(0, 1fr) 170px;
+    gap: 8px;
+}
+
+.mark-form textarea {
+    min-height: 42px;
+    max-height: 64px;
+    padding: 8px 9px;
+    font-size: 12px;
+}
+
+.mark-form .btn-block {
+    min-height: 42px;
+    padding: 8px 10px;
+    font-size: 13px;
+}
+
+.auto-label-panel {
+    padding: 6px 8px !important;
+    margin-bottom: 6px !important;
+    gap: 8px !important;
+    font-size: 11px !important;
+}
+
+.auto-label-panel .btn-small,
+.stats-bar .btn-small,
+.ssh-input-line .btn-small,
+.ssh-toolbar .btn-small {
+    padding: 3px 8px;
+    font-size: 11px;
+}
+
+@media (max-height: 840px) {
+    body:has(.player-page) .main-content {
+        padding-top: 10px;
+        padding-bottom: 10px;
+    }
+
+    .player-header {
+        margin-bottom: 6px;
+    }
+
+    .stats-bar {
+        padding: 8px 14px;
+        margin-bottom: 10px;
+    }
+
+    .ssh-section {
+        flex-basis: 190px;
+        min-height: 145px;
+    }
+
+    .ssh-section.ssh-connected {
+        flex-basis: 260px;
+        min-height: 225px;
+        max-height: 46%;
+    }
+
+    .icon-ctrl {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+    }
 }

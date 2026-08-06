@@ -168,21 +168,6 @@
                 <span class="time-total" id="timeTotal">0:00</span>
             </div>
 
-            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
-                <button class="btn btn-small" id="btnAutoLabel">开启自动标注</button>
-                <span id="autoLabelState">自动标注：关闭</span>
-                <span>已通过 <strong id="autoLabelPassedCount">0</strong>，自动标注 <strong id="autoLabelMarkedCount">0</strong></span>
-                <span id="autoLabelMessage" style="color:var(--text-muted);"></span>
-            </div>
-            {% if task.task_type|default('wake') == 'wake' %}
-            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff7ed;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
-                <button class="btn btn-small" id="btnRetestAll">总复测</button>
-                <span id="retestState">复测：未开始</span>
-                <button class="btn btn-small" id="btnRetestRestart">&#37325;&#26032;&#22797;&#27979;</button>
-                <span id="retestMessage" style="color:var(--text-muted);"></span>
-            </div>
-            {% endif %}
-
             <div class="mark-section">
                 <div class="current-file" id="currentFile">
                     <span class="label">当前音频:</span>
@@ -201,15 +186,33 @@
                     {% endif %}
                 </div>
             </div>
+
+            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#f8fafc;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                <button class="btn btn-small" id="btnAutoLabel">开启自动标注</button>
+                <span id="autoLabelState">自动标注：关闭</span>
+                <span>已通过 <strong id="autoLabelPassedCount">0</strong>，自动标注 <strong id="autoLabelMarkedCount">0</strong></span>
+                <span id="autoLabelMessage" style="color:var(--text-muted);"></span>
+            </div>
+            {% if task.task_type|default('wake') == 'wake' %}
+            <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff7ed;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
+                <button class="btn btn-small" id="btnRetestAll">总复测</button>
+                <span id="retestState">复测：未开始</span>
+                <button class="btn btn-small" id="btnRetestRestart">&#37325;&#26032;&#22797;&#27979;</button>
+                <span id="retestMessage" style="color:var(--text-muted);"></span>
+            </div>
+            {% endif %}
         </div>
 
         <!-- 右侧：badcase列表 -->
         <div class="badcase-panel">
+            <div class="badcase-panel-header">
             {% if task.task_type|default('wake') == 'voiceprint' %}
-            <h3>⚠️ 错误列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
+                <h3>⚠️ 错误列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
             {% else %}
-            <h3>⚠️ Badcase列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
+                <h3>⚠️ Badcase列表 (<span id="badcaseCount">{{ badcases|length }}</span>)</h3>
             {% endif %}
+                <button class="btn btn-small btn-danger btn-clear-badcases" id="btnClearBadcases" onclick="deleteAllBadcases()" {% if badcases|length == 0 %}disabled{% endif %}>全部删除</button>
+            </div>
             <div class="badcase-list-scroll" id="badcaseList">
                 {% for bc in badcases %}
                 <div class="badcase-item" data-id="{{ bc.id }}" data-start="{{ bc.start_time }}" data-filename="{{ bc.filename }}" data-error-type="{{ bc.error_type|default('') }}">
@@ -314,6 +317,7 @@ const voiceprintMarkButtons = document.querySelectorAll('.voiceprint-mark-action
 const badcaseNote = document.getElementById('badcaseNote');
 const badcaseList = document.getElementById('badcaseList');
 const badcaseCount = document.getElementById('badcaseCount');
+const btnClearBadcases = document.getElementById('btnClearBadcases');
 const statsTotalFilesEl = document.getElementById('statsTotalFiles');
 const statsBadcaseCountEl = document.getElementById('statsBadcaseCount');
 const statsSuccessCountEl = document.getElementById('statsSuccessCount');
@@ -350,8 +354,10 @@ function initSshPanelResize() {
 
     const clampHeight = (height) => {
         const panelHeight = playerPanel.getBoundingClientRect().height;
-        const minHeight = 180;
-        const maxHeight = Math.max(minHeight, panelHeight - 430);
+        const minHeight = 160;
+        const resizerHeight = sshPanelResizer.getBoundingClientRect().height || 8;
+        const bottomGuard = 18;
+        const maxHeight = Math.max(minHeight, panelHeight - resizerHeight - bottomGuard);
         return Math.min(Math.max(height, minHeight), maxHeight);
     };
 
@@ -402,6 +408,7 @@ const VOICEPRINT_SPEAKER_FIELD_RE = /speaker:\s*([^)"]+)/i;
 const VOICEPRINT_NUMBER_RE = /(\d{2})$/;
 const RETEST_REPEAT_COUNT = 3;
 const RETEST_INTERVAL_OFFSET_SEC = 0.8;
+const RETEST_LOG_SETTLE_MS = 300;
 
 let autoLabelEnabled = false;
 let autoLabelPassed = new Set();
@@ -420,6 +427,7 @@ let retestRunning = false;
 let retestPaused = false;
 let retestSession = null;
 let retestRestartRequested = false;
+let retestAbortMessage = '';
 let currentTaskHeartbeatTimer = null;
 
 // ========== 格式化时间 ==========
@@ -708,10 +716,25 @@ function updateRetestStatus(message = '') {
     retestMessage.textContent = message;
 }
 
+function abortRetest(message) {
+    if (!retestRunning) return;
+    retestAbortMessage = message || '复测已中断';
+    retestRunning = false;
+    retestPaused = false;
+    pauseRetestAudio();
+    updateRetestStatus(retestAbortMessage);
+}
+
 function pauseRetestAudio() {
     audio.pause();
     setPlayButtonState(false);
     isPlaying = false;
+}
+
+function setRetestCurrentRunPhase(phase) {
+    if (retestSession && retestSession.currentRun) {
+        retestSession.currentRun.phase = phase;
+    }
 }
 
 async function playRetestAudioFrom(time) {
@@ -914,6 +937,7 @@ function processAutoLabelLogOutput(output) {
 
 function processRetestLogOutput(output) {
     if (!retestRunning || !retestSession || !retestSession.currentRun || !output) return;
+    if (!['playing', 'settling'].includes(retestSession.currentRun.phase)) return;
 
     output.split(/\r?\n/).forEach(rawLine => {
         const line = rawLine.trim();
@@ -961,19 +985,39 @@ async function waitWhileRetestPaused() {
     }
 }
 
+async function waitForRetestSettle(ms = RETEST_LOG_SETTLE_MS) {
+    const endAt = Date.now() + Math.max(0, Number(ms) || 0);
+    while (retestRunning && Date.now() < endAt) {
+        await waitWhileRetestPaused();
+        if (!retestRunning) return;
+        await sleep(Math.min(50, Math.max(0, endAt - Date.now())));
+    }
+}
+
+async function waitForSshPollIdle() {
+    while (sshPollFetchInFlight > 0) {
+        await sleep(20);
+    }
+}
+
 async function waitForRetestStopTime(stopTime) {
+    setRetestCurrentRunPhase('playing');
+    const startClock = Date.now();
+    const startAudioTime = Number(audio.currentTime) || 0;
+    const targetStopTime = Math.max(startAudioTime, Number(stopTime) || startAudioTime);
+    const targetElapsedMs = Math.max(0, (targetStopTime - startAudioTime) * 1000);
     while (retestRunning) {
         await waitWhileRetestPaused();
         if (!retestRunning) return;
         const duration = Number(audio.duration) || 0;
-        if (audio.ended || (audio.paused && duration > 0 && (audio.currentTime || 0) >= duration - 0.05)) {
+        const currentAudioTime = Number(audio.currentTime) || 0;
+        const elapsedMs = Date.now() - startClock;
+        if (elapsedMs >= targetElapsedMs || currentAudioTime >= targetStopTime) {
             pauseRetestAudio();
+            setRetestCurrentRunPhase('settling');
             return;
         }
-        if ((audio.currentTime || 0) >= stopTime) {
-            pauseRetestAudio();
-            return;
-        }
+        if (duration > 0 && currentAudioTime >= duration - 0.05) pauseRetestAudio();
         await sleep(20);
     }
 }
@@ -988,6 +1032,11 @@ async function drainSSHOutput() {
     try {
         const res = await fetch(`/api/ssh/output?task_id=${taskId}`);
         const data = await res.json();
+        if (!data.connected) {
+            sshConnected = false;
+            abortRetest('复测中断：SSH 已断开');
+            return;
+        }
         if (data.success && data.output) {
             processAutoLabelLogOutput(data.output);
             processRetestLogOutput(data.output);
@@ -1006,7 +1055,7 @@ async function runRetestAll() {
             audio.pause();
             setPlayButtonState(false);
             isPlaying = false;
-        } else if (retestSession && retestSession.currentRun && audio.paused) {
+        } else if (retestSession && retestSession.currentRun && retestSession.currentRun.phase === 'playing' && audio.paused) {
             try {
                 await audio.play();
                 setPlayButtonState(true);
@@ -1035,6 +1084,9 @@ async function runRetestAll() {
 
     retestRunning = true;
     retestPaused = false;
+    retestAbortMessage = '';
+    sshPollGeneration += 1;
+    await waitForSshPollIdle();
     retestSession = {
         queue,
         currentRun: null,
@@ -1063,7 +1115,8 @@ async function runRetestAll() {
                     badcaseId: entry.id,
                     filename: entry.filename,
                     attempt,
-                    detected: false
+                    detected: false,
+                    phase: 'ready'
                 };
                 updateRetestStatus(`复测 ${retestSession.processed + 1}/${queue.length}：${entry.filename} 第 ${attempt}/${RETEST_REPEAT_COUNT} 次`);
                 await waitWhileRetestPaused();
@@ -1071,6 +1124,7 @@ async function runRetestAll() {
                 const playbackStarted = await playRetestAudioFrom(entry.startTime);
                 if (!playbackStarted) throw new Error('复测音频播放失败');
                 await waitForRetestStopTime(getRetestStopTime(entry));
+                await waitForRetestSettle();
                 await drainSSHOutput();
                 if (!retestRunning) break;
 
@@ -1087,9 +1141,11 @@ async function runRetestAll() {
                     updateRetestStatus('\u590d\u6d4b\u4fdd\u7559\uff1a' + entry.filename + '\uff08\u7b2c ' + attempt + ' \u6b21\u672a\u5524\u9192\uff0c\u8df3\u8fc7\u5269\u4f59\u590d\u6d4b\uff09');
                     break;
                 }
+                retestSession.currentRun = null;
             }
 
             retestSession.currentRun = null;
+            if (!retestRunning) break;
             retestSession.processed += 1;
 
             if (hitCount === RETEST_REPEAT_COUNT && getBadcaseItemById(entry.id)) {
@@ -1108,12 +1164,14 @@ async function runRetestAll() {
         finalMessage = `复测完成：已移除 ${retestSession.recovered} 条，剩余 ${badcaseList.querySelectorAll('.badcase-item').length} 条。`;
     } catch (e) {
         console.warn('retest error', e);
-        finalMessage = `复测中断：${e.message || '未知错误'}`;
+        finalMessage = retestAbortMessage || `复测中断：${e.message || '未知错误'}`;
     } finally {
         const shouldRestart = retestRestartRequested;
         if (shouldRestart) {
             retestRestartRequested = false;
             finalMessage = '\u6b63\u5728\u91cd\u65b0\u590d\u6d4b...';
+        } else if (retestAbortMessage) {
+            finalMessage = retestAbortMessage;
         }
         audio.pause();
         setPlayButtonState(false);
@@ -1121,6 +1179,7 @@ async function runRetestAll() {
         retestRunning = false;
         retestPaused = false;
         retestSession = null;
+        retestAbortMessage = '';
         updateRetestStatus(finalMessage);
         if (shouldRestart) setTimeout(runRetestAll, 0);
     }
@@ -1331,6 +1390,7 @@ function escapeHtml(value) {
 function updateStatsSummary() {
     const totalFiles = timestamps.length;
     const badcaseTotal = badcaseList ? badcaseList.querySelectorAll('.badcase-item').length : 0;
+    if (btnClearBadcases) btnClearBadcases.disabled = badcaseTotal === 0;
     if (statsTotalFilesEl) statsTotalFilesEl.textContent = String(totalFiles);
     if (badcaseCount) badcaseCount.textContent = String(badcaseTotal);
 
@@ -1409,9 +1469,37 @@ async function deleteBadcase(id, options = {}) {
     return false;
 }
 
+async function deleteAllBadcases() {
+    const items = badcaseList ? Array.from(badcaseList.querySelectorAll('.badcase-item')) : [];
+    if (items.length === 0) return;
+    if (!confirm(`确定删除当前任务的全部 ${items.length} 条 badcase？`)) return;
+
+    if (btnClearBadcases) btnClearBadcases.disabled = true;
+    try {
+        const res = await fetch(`/api/tasks/${taskId}/badcases`, { method: 'DELETE' });
+        const data = await res.json();
+        if (!res.ok || !data.success) {
+            alert(data.detail || data.message || '全部删除失败');
+            updateStatsSummary();
+            return;
+        }
+
+        badcaseList.innerHTML = '';
+        badcaseFilenameCounts.clear();
+        timestamps.forEach(ts => setFileBadgeVisibleByFilename(ts.filename, false));
+        updateStatsSummary();
+        updateRetestStatus(`已删除全部 badcase（${Number(data.deleted_count || items.length)} 条）。`);
+    } catch (e) {
+        alert('全部删除失败: ' + e.message);
+        updateStatsSummary();
+    }
+}
+
 // ========== SSH终端 ==========
 let sshConnected = false;
 let sshPollInterval = null;
+let sshPollGeneration = 0;
+let sshPollFetchInFlight = 0;
 const sshTerminal = document.getElementById('sshTerminal');
 const sshForm = document.getElementById('sshForm');
 const sshToolbar = document.getElementById('sshToolbar');
@@ -1450,6 +1538,7 @@ async function connectSSH() {
         const data = await res.json();
         if (data.success) {
             sshConnected = true;
+            if (sshSection) sshSection.classList.add('ssh-connected');
             sshForm.style.display = 'none';
             sshToolbar.style.display = 'flex';
             sshInputLine.style.display = 'flex';
@@ -1470,12 +1559,14 @@ async function connectSSH() {
 }
 
 async function disconnectSSH() {
+    abortRetest('复测中断：SSH 已断开');
     try {
         const formData = new FormData();
         formData.append('task_id', taskId);
         await fetch('/api/ssh/disconnect', { method: 'POST', body: formData });
     } catch (e) {}
     sshConnected = false;
+    if (sshSection) sshSection.classList.remove('ssh-connected');
     sshForm.style.display = 'block';
     sshToolbar.style.display = 'none';
     sshInputLine.style.display = 'none';
@@ -1512,21 +1603,28 @@ function sendSSHInput() {
 function startSSHPoll() {
     if (sshPollInterval) clearInterval(sshPollInterval);
     sshPollInterval = setInterval(async () => {
-        if (!sshConnected) return;
+        if (!sshConnected || retestRunning) return;
+        const pollGeneration = sshPollGeneration;
+        sshPollFetchInFlight += 1;
         try {
             const res = await fetch(`/api/ssh/output?task_id=${taskId}`);
             const data = await res.json();
+            if (pollGeneration !== sshPollGeneration) return;
             if (data.success && data.output) {
                 processAutoLabelLogOutput(data.output);
                 processRetestLogOutput(data.output);
                 appendTerminal(data.output);
             }
             if (!data.connected) {
+                sshConnected = false;
+                abortRetest('复测中断：SSH 已断开');
                 sshStatus.textContent = '已断开';
                 sshStatus.classList.remove('connected');
             }
         } catch (e) {
             console.error('poll error', e);
+        } finally {
+            sshPollFetchInFlight = Math.max(0, sshPollFetchInFlight - 1);
         }
     }, 500);
 }
