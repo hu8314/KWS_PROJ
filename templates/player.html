@@ -59,6 +59,15 @@
         </div>
         {% endif %}
         <button class="btn btn-small" onclick="exportTaskReport('{{ task.task_id }}')">📄 导出报告</button>
+        {% if task.task_type|default('wake') != 'voiceprint' %}
+        <div class="wake-keyword-control">
+            <div class="wake-keyword-row">
+                <label for="wakeKeywordInput">自动标注匹配关键词</label>
+                <input type="text" id="wakeKeywordInput" placeholder="keyword">
+            </div>
+            <div class="wake-keyword-hint">多关键词中间加逗号</div>
+        </div>
+        {% endif %}
     </div>
 
     <div class="player-layout">
@@ -193,7 +202,7 @@
                 <span>已通过 <strong id="autoLabelPassedCount">0</strong>，自动标注 <strong id="autoLabelMarkedCount">0</strong></span>
                 <span id="autoLabelMessage" style="color:var(--text-muted);"></span>
             </div>
-            {% if task.task_type|default('wake') == 'wake' %}
+            {% if task.task_type|default('wake') != 'voiceprint' %}
             <div class="auto-label-panel" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:#fff7ed;border:1px solid var(--border);border-radius:var(--radius);padding:8px 10px;margin-bottom:8px;font-size:12px;">
                 <button class="btn btn-small" id="btnRetestAll">总复测</button>
                 <span id="retestState">复测：未开始</span>
@@ -332,6 +341,7 @@ const autoLabelState = document.getElementById('autoLabelState');
 const autoLabelPassedCountEl = document.getElementById('autoLabelPassedCount');
 const autoLabelMarkedCountEl = document.getElementById('autoLabelMarkedCount');
 const autoLabelMessage = document.getElementById('autoLabelMessage');
+const wakeKeywordInput = document.getElementById('wakeKeywordInput');
 const btnRetestAll = document.getElementById('btnRetestAll');
 const btnRetestRestart = document.getElementById('btnRetestRestart');
 const retestState = document.getElementById('retestState');
@@ -389,18 +399,8 @@ function initSshPanelResize() {
 initSshPanelResize();
 
 // ========== 自动标注状态 ==========
-const WAKE_KEYWORDS = [
-    '小 优',
-    '嘿 小 优',
-    '嗨 小 优',
-    '嘿，小 优',
-    '嗨，小 优',
-    'Uliya',
-    'Hi Uliya',
-    'Hey Uliya',
-    'Hi, Uliya',
-    'Hey, Uliya'
-];
+const WAKE_LOG_KEYWORDS_STORAGE_KEY = `audiolab.wakeLogKeywords.${taskId}`;
+const DEFAULT_WAKE_LOG_KEYWORDS = 'keyword';
 const AUTO_LABEL_NO_LOG_NOTE = '自动标注：未识别到，播放片段及间隔时间内没有出现新日志';
 const AUTO_LABEL_NO_KEYWORD_NOTE_PREFIX = '自动标注：未识别到关键词，出现的新日志：';
 const VOICEPRINT_EXPECTED_NUMBER_RE = /^(\d{2})/;
@@ -753,8 +753,36 @@ async function playRetestAudioFrom(time) {
     }
 }
 
+function parseWakeLogKeywords(value) {
+    return String(value || '')
+        .split(/[，,\n\r\t ]+/)
+        .map(item => item.trim().toLowerCase())
+        .filter(Boolean);
+}
+
+function getWakeLogKeywords() {
+    const inputValue = wakeKeywordInput ? wakeKeywordInput.value : '';
+    const keywords = parseWakeLogKeywords(inputValue);
+    return keywords.length > 0 ? keywords : parseWakeLogKeywords(DEFAULT_WAKE_LOG_KEYWORDS);
+}
+
+function initWakeLogKeywordInput() {
+    if (!wakeKeywordInput) return;
+    let savedValue = '';
+    try {
+        savedValue = window.localStorage.getItem(WAKE_LOG_KEYWORDS_STORAGE_KEY) || '';
+    } catch (e) {}
+    wakeKeywordInput.value = savedValue.trim() || DEFAULT_WAKE_LOG_KEYWORDS;
+    wakeKeywordInput.addEventListener('input', () => {
+        try {
+            window.localStorage.setItem(WAKE_LOG_KEYWORDS_STORAGE_KEY, wakeKeywordInput.value.trim() || DEFAULT_WAKE_LOG_KEYWORDS);
+        } catch (e) {}
+    });
+}
+
 function isWakeLogLine(line) {
-    return String(line || '').toLowerCase().includes('keyword:');
+    const normalizedLine = String(line || '').toLowerCase();
+    return getWakeLogKeywords().some(keyword => normalizedLine.includes(keyword));
 }
 
 function getVoiceprintSequenceIndex(ts) {
@@ -1048,7 +1076,7 @@ async function drainSSHOutput() {
 }
 
 async function runRetestAll() {
-    if (taskType !== 'wake' || !btnRetestAll) return;
+    if (taskType === 'voiceprint' || !btnRetestAll) return;
     if (retestRunning) {
         retestPaused = !retestPaused;
         if (retestPaused) {
@@ -1186,7 +1214,7 @@ async function runRetestAll() {
 }
 
 async function restartRetestAll() {
-    if (taskType !== 'wake' || !btnRetestAll) return;
+    if (taskType === 'voiceprint' || !btnRetestAll) return;
     if (retestRunning) {
         retestRestartRequested = true;
         retestRunning = false;
@@ -1693,6 +1721,7 @@ window.addEventListener('beforeunload', () => {
 if (timestamps.length > 0) {
     updateCurrentFile(0);
 }
+initWakeLogKeywordInput();
 updateStatsSummary();
 
 if (btnRetestAll) {

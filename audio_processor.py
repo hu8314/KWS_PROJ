@@ -558,7 +558,7 @@ def export_badcases_to_csv(badcases: List[Dict[str, Any]],
 
     selected_task_ids = {str(b.get("task_id", "")) for b in badcases if b.get("task_id")}
     all_wake = bool(selected_task_ids) and all(
-        (task_configs.get(task_id, {}) or {}).get("task_type", "wake") == "wake"
+        (task_configs.get(task_id, {}) or {}).get("task_type", "wake") != "voiceprint"
         for task_id in selected_task_ids
     )
     all_voiceprint = bool(selected_task_ids) and all(
@@ -583,6 +583,9 @@ def export_badcases_to_csv(badcases: List[Dict[str, Any]],
 
     frr = (fn_count / total_in_count) if total_in_count > 0 else 0.0
     far = (fp_count / total_out_count) if total_out_count > 0 else 0.0
+    voiceprint_error_count = fp_count + fn_count
+    voiceprint_correct_count = max(0, total_audio - voiceprint_error_count)
+    voiceprint_accuracy = (voiceprint_correct_count / total_audio) if total_audio > 0 else 0.0
     wake_rate = ((total_audio - len(badcases)) / total_audio) if total_audio > 0 else 0.0
     
     headers = ["ID", "任务名称", "文件名", "开始时间(秒)", "结束时间(秒)",
@@ -595,8 +598,12 @@ def export_badcases_to_csv(badcases: List[Dict[str, Any]],
             writer.writerow(["总音频", total_audio])
             writer.writerow(["FP数", fp_count])
             writer.writerow(["FN数", fn_count])
+            writer.writerow(["正确数", voiceprint_correct_count])
+            writer.writerow(["错误数", voiceprint_error_count])
+            writer.writerow(["正确率", f"{voiceprint_accuracy:.2%}"])
             writer.writerow(["FRR", f"{frr:.2%}"])
             writer.writerow(["FAR", f"{far:.2%}"])
+            writer.writerow(["RAR", f"{far:.2%}"])
             writer.writerow(["总数", len(badcases)])
         elif all_wake:
             writer.writerow(["总音频", total_audio])

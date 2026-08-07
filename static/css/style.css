@@ -1403,6 +1403,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 4px;
+    min-width: 130px;
 }
 
 .filter-group label {
@@ -1636,11 +1637,58 @@ body {
     color: var(--primary);
 }
 
+.wake-keyword-control {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 3px;
+    margin-left: auto;
+    min-width: 320px;
+}
+
+.wake-keyword-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.wake-keyword-control label {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.wake-keyword-control input {
+    width: 180px;
+    height: 32px;
+    padding: 6px 10px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--card);
+    color: var(--text);
+    font-size: 12px;
+}
+
+.wake-keyword-control input:focus {
+    outline: none;
+    border-color: var(--primary);
+    box-shadow: 0 0 0 3px rgba(5, 150, 105, 0.12);
+}
+
+.wake-keyword-hint {
+    padding-left: 93px;
+    color: var(--text-muted);
+    font-size: 10px;
+    line-height: 1.2;
+}
+
 /* ========== 数据集页面 ========== */
 .dataset-management-layout {
     display: grid;
-    grid-template-columns: 270px minmax(0, 1fr);
-    gap: 26px;
+    grid-template-columns: 230px minmax(0, 1fr);
+    gap: 22px;
     align-items: start;
 }
 
@@ -1649,25 +1697,25 @@ body {
     top: 84px;
     display: flex;
     flex-direction: column;
-    gap: 14px;
-    padding: 18px;
+    gap: 10px;
+    padding: 14px;
     background: var(--card);
     border: 1px solid var(--border);
-    border-radius: 18px;
+    border-radius: 14px;
     box-shadow: var(--shadow-lg);
 }
 
 .dataset-side-item {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 12px;
     width: 100%;
-    padding: 16px 18px;
+    padding: 12px 13px;
     border: 1px solid transparent;
-    border-radius: 14px;
+    border-radius: 12px;
     background: transparent;
     color: var(--text);
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 700;
     text-align: left;
     cursor: pointer;
@@ -1685,14 +1733,14 @@ body {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 54px;
-    height: 48px;
-    padding: 0 10px;
+    min-width: 42px;
+    height: 38px;
+    padding: 0 8px;
     flex-shrink: 0;
-    border-radius: 14px;
+    border-radius: 11px;
     background: #e8f8ee;
     color: var(--primary);
-    font-size: 13px;
+    font-size: 11px;
     font-weight: 800;
     letter-spacing: 0.3px;
 }
@@ -2450,6 +2498,27 @@ body:has(.player-page) .nav-menu a {
 
 .stat-value {
     font-size: 16px;
+}
+
+.wake-keyword-control {
+    min-width: 282px;
+    gap: 2px;
+}
+
+.wake-keyword-control input {
+    width: 150px;
+    height: 28px;
+    padding: 4px 8px;
+    font-size: 11px;
+}
+
+.wake-keyword-control label {
+    font-size: 10px;
+}
+
+.wake-keyword-hint {
+    padding-left: 84px;
+    font-size: 9px;
 }
 
 .player-layout {

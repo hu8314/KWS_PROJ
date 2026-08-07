@@ -55,6 +55,7 @@ DATASETS_DIR.mkdir(exist_ok=True)
 DEFAULT_DISTANCES = ["1m", "3m", "5m"]
 DEFAULT_ANGLES = ["90°", "45°", "180°", "270°"]
 DEFAULT_NOISE_LEVELS = ["安静40db", "中低噪48db", "中高噪56db"]
+TASK_TYPES = {"wake", "voiceprint", "oenshot"}
 
 # ========== SSH会话管理 ==========
 class SSHSession:
@@ -240,7 +241,8 @@ async def badcases_page(request: Request):
         "badcases": all_badcases,
         "badcase_groups": badcase_groups,
         "distances": DEFAULT_DISTANCES,
-        "angles": DEFAULT_ANGLES
+        "angles": DEFAULT_ANGLES,
+        "noise_levels": DEFAULT_NOISE_LEVELS
     })
 
 
@@ -261,7 +263,7 @@ async def upload_files(
     files: List[UploadFile] = File(...)
 ):
     """上传并合成音频"""
-    if task_type not in {"wake", "voiceprint"}:
+    if task_type not in TASK_TYPES:
         task_type = "wake"
     voiceprint_in_count = max(0, voiceprint_in_count)
     voiceprint_out_count = max(0, voiceprint_out_count)
@@ -614,7 +616,7 @@ async def api_create_task_from_dataset(
     noise_level: str = Form("安静40db")
 ):
     """基于已有数据集创建合成任务（可更换测试环境）"""
-    if task_type not in {"wake", "voiceprint"}:
+    if task_type not in TASK_TYPES:
         task_type = "wake"
     voiceprint_in_count = max(0, voiceprint_in_count)
     voiceprint_out_count = max(0, voiceprint_out_count)
@@ -743,8 +745,10 @@ async def api_export_task_report(task_id: str):
 @app.get("/api/export/badcases")
 async def api_export_badcases(
     task_id: Optional[str] = Query(None),
+    task_type: Optional[str] = Query(None),
     distance: Optional[str] = Query(None),
     angle: Optional[str] = Query(None),
+    noise_level: Optional[str] = Query(None),
     selected: Optional[List[str]] = Query(None)
 ):
     """导出badcase为CSV"""
@@ -763,15 +767,20 @@ async def api_export_badcases(
             item = dict(badcase)
             item["task_id"] = tid
             item["task_name"] = task["task_name"]
+            item["task_type"] = task.get("task_type", "wake")
             item["selected_key"] = f"{tid}:{badcase.get('id', '')}"
             all_badcases.append(item)
         task_name_map[tid] = task["task_name"]
     
     # 筛选
+    if task_type:
+        all_badcases = [b for b in all_badcases if b.get("task_type", "wake") == task_type]
     if distance:
         all_badcases = [b for b in all_badcases if b.get("environment", {}).get("distance") == distance]
     if angle:
         all_badcases = [b for b in all_badcases if b.get("environment", {}).get("angle") == angle]
+    if noise_level:
+        all_badcases = [b for b in all_badcases if b.get("environment", {}).get("noise_level") == noise_level]
     if selected_keys:
         all_badcases = [b for b in all_badcases if b.get("selected_key") in selected_keys]
 

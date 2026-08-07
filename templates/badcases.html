@@ -157,6 +157,15 @@
         <input type="text" id="searchInput" placeholder="输入项目名或文件名">
     </div>
     <div class="filter-group">
+        <label for="taskTypeFilter">任务类型</label>
+        <select id="taskTypeFilter">
+            <option value="">全部</option>
+            <option value="wake">唤醒</option>
+            <option value="oenshot">oenshot指令唤醒</option>
+            <option value="voiceprint">声纹识别</option>
+        </select>
+    </div>
+    <div class="filter-group">
         <label for="distanceFilter">距离</label>
         <select id="distanceFilter">
             <option value="">全部</option>
@@ -170,6 +179,15 @@
         <select id="angleFilter">
             <option value="">全部</option>
             {% for item in angles %}
+            <option value="{{ item }}">{{ item }}</option>
+            {% endfor %}
+        </select>
+    </div>
+    <div class="filter-group">
+        <label for="noiseLevelFilter">噪音等级</label>
+        <select id="noiseLevelFilter">
+            <option value="">全部</option>
+            {% for item in noise_levels %}
             <option value="{{ item }}">{{ item }}</option>
             {% endfor %}
         </select>
@@ -193,7 +211,7 @@
                 <div>
                     <div class="badcase-group-title">{{ group.task_name }}</div>
                     <div class="badcase-group-meta">
-                        <span class="env-tag">{{ group.task_type == 'voiceprint' and '声纹' or '唤醒' }}</span>
+                        <span class="env-tag">{{ group.task_type == 'voiceprint' and '声纹' or (group.task_type == 'oenshot' and 'oenshot指令唤醒' or '唤醒') }}</span>
                         <span class="env-tag">{{ group.total_files }} 条音频</span>
                         <span class="env-tag">{{ group.environment.distance }}</span>
                         <span class="env-tag">{{ group.environment.angle }}</span>
@@ -213,8 +231,10 @@
                      data-item-row
                      data-selected-key="{{ item.selected_key }}"
                      data-task-id="{{ item.task_id }}"
+                     data-task-type="{{ item.task_type }}"
                      data-distance="{{ item.environment.distance }}"
                      data-angle="{{ item.environment.angle }}"
+                     data-noise-level="{{ item.environment.noise_level }}"
                      data-filename="{{ item.filename }}">
                     <button class="item-select-btn selected"
                             type="button"
@@ -255,8 +275,10 @@
 {% block scripts %}
 <script>
 const searchInput = document.getElementById('searchInput');
+const taskTypeFilter = document.getElementById('taskTypeFilter');
 const distanceFilter = document.getElementById('distanceFilter');
 const angleFilter = document.getElementById('angleFilter');
+const noiseLevelFilter = document.getElementById('noiseLevelFilter');
 const btnToggleSelectAll = document.getElementById('btnToggleSelectAll');
 const btnExportSelected = document.getElementById('btnExportSelected');
 const groupCards = Array.from(document.querySelectorAll('.badcase-group-card'));
@@ -296,8 +318,10 @@ function updateSelectAllButtonState() {
 
 function applyFilters() {
     const keyword = (searchInput.value || '').trim().toLowerCase();
+    const taskType = taskTypeFilter.value;
     const distance = distanceFilter.value;
     const angle = angleFilter.value;
+    const noiseLevel = noiseLevelFilter.value;
 
     groupCards.forEach(card => {
         const taskName = (card.dataset.taskName || '').toLowerCase();
@@ -307,9 +331,11 @@ function applyFilters() {
         rows.forEach(row => {
             const filename = (row.dataset.filename || '').toLowerCase();
             const matchKeyword = !keyword || taskName.includes(keyword) || filename.includes(keyword);
+            const matchTaskType = !taskType || row.dataset.taskType === taskType;
             const matchDistance = !distance || row.dataset.distance === distance;
             const matchAngle = !angle || row.dataset.angle === angle;
-            const visible = matchKeyword && matchDistance && matchAngle;
+            const matchNoiseLevel = !noiseLevel || row.dataset.noiseLevel === noiseLevel;
+            const visible = matchKeyword && matchTaskType && matchDistance && matchAngle && matchNoiseLevel;
             row.style.display = visible ? 'flex' : 'none';
             if (visible) {
                 setRowSelected(row, true);
@@ -345,10 +371,14 @@ function exportSelected() {
     }
 
     const params = new URLSearchParams();
+    const taskType = taskTypeFilter.value;
     const distance = distanceFilter.value;
     const angle = angleFilter.value;
+    const noiseLevel = noiseLevelFilter.value;
+    if (taskType) params.append('task_type', taskType);
     if (distance) params.append('distance', distance);
     if (angle) params.append('angle', angle);
+    if (noiseLevel) params.append('noise_level', noiseLevel);
     selected.forEach(value => params.append('selected', value));
 
     window.location.href = `/api/export/badcases?${params.toString()}`;
@@ -382,8 +412,10 @@ groupCards.forEach(card => {
 });
 
 searchInput?.addEventListener('input', applyFilters);
+taskTypeFilter?.addEventListener('change', applyFilters);
 distanceFilter?.addEventListener('change', applyFilters);
 angleFilter?.addEventListener('change', applyFilters);
+noiseLevelFilter?.addEventListener('change', applyFilters);
 
 btnToggleSelectAll?.addEventListener('click', () => {
     const visibleRows = getVisibleRows();
