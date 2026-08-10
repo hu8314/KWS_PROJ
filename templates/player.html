@@ -1014,11 +1014,20 @@ async function waitWhileRetestPaused() {
 }
 
 async function waitForRetestSettle(ms = RETEST_LOG_SETTLE_MS) {
-    const endAt = Date.now() + Math.max(0, Number(ms) || 0);
-    while (retestRunning && Date.now() < endAt) {
-        await waitWhileRetestPaused();
-        if (!retestRunning) return;
-        await sleep(Math.min(50, Math.max(0, endAt - Date.now())));
+    let remainingMs = Math.max(0, Number(ms) || 0);
+    while (retestRunning && remainingMs > 0) {
+        if (retestPaused) {
+            await waitWhileRetestPaused();
+            if (!retestRunning) return;
+            continue;
+        }
+
+        const waitMs = Math.min(50, remainingMs);
+        const startClock = Date.now();
+        await sleep(waitMs);
+        if (!retestPaused) {
+            remainingMs -= Date.now() - startClock;
+        }
     }
 }
 
@@ -1030,17 +1039,25 @@ async function waitForSshPollIdle() {
 
 async function waitForRetestStopTime(stopTime) {
     setRetestCurrentRunPhase('playing');
-    const startClock = Date.now();
+    let lastTickClock = Date.now();
+    let activeElapsedMs = 0;
     const startAudioTime = Number(audio.currentTime) || 0;
     const targetStopTime = Math.max(startAudioTime, Number(stopTime) || startAudioTime);
     const targetElapsedMs = Math.max(0, (targetStopTime - startAudioTime) * 1000);
     while (retestRunning) {
-        await waitWhileRetestPaused();
-        if (!retestRunning) return;
+        if (retestPaused) {
+            await waitWhileRetestPaused();
+            lastTickClock = Date.now();
+            if (!retestRunning) return;
+            continue;
+        }
+
+        const now = Date.now();
+        activeElapsedMs += now - lastTickClock;
+        lastTickClock = now;
         const duration = Number(audio.duration) || 0;
         const currentAudioTime = Number(audio.currentTime) || 0;
-        const elapsedMs = Date.now() - startClock;
-        if (elapsedMs >= targetElapsedMs || currentAudioTime >= targetStopTime) {
+        if (activeElapsedMs >= targetElapsedMs || currentAudioTime >= targetStopTime) {
             pauseRetestAudio();
             setRetestCurrentRunPhase('settling');
             return;

@@ -57,6 +57,18 @@ DEFAULT_ANGLES = ["90°", "45°", "180°", "270°"]
 DEFAULT_NOISE_LEVELS = ["安静40db", "中低噪48db", "中高噪56db"]
 TASK_TYPES = {"wake", "voiceprint", "oenshot"}
 
+
+def merge_unique_options(defaults: List[str], values: List[str]) -> List[str]:
+    options = []
+    seen = set()
+    for value in [*defaults, *values]:
+        text = str(value or "").strip()
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        options.append(text)
+    return options
+
 # ========== SSH会话管理 ==========
 class SSHSession:
     def __init__(self):
@@ -145,6 +157,22 @@ def sanitize_download_filename(name: str, fallback: str = "download") -> str:
     return sanitized or fallback
 
 
+def sanitize_upload_filename(filename: str, fallback: str = "upload") -> str:
+    raw = os.path.basename(str(filename or "").replace('\\', '/')).strip()
+    sanitized = sanitize_download_filename(raw, fallback=fallback)
+    return sanitized or fallback
+
+
+def unique_upload_path(directory: str, filename: str) -> str:
+    base, ext = os.path.splitext(filename)
+    candidate = os.path.join(directory, filename)
+    index = 2
+    while os.path.exists(candidate):
+        candidate = os.path.join(directory, f"{base}_{index}{ext}")
+        index += 1
+    return candidate
+
+
 # ========== 页面路由 ==========
 # 页面模板修改后依赖运行中的热重载重新读取
 @app.get("/", response_class=HTMLResponse)
@@ -208,15 +236,20 @@ async def badcases_page(request: Request):
     all_badcases = []
     tasks = get_all_tasks(str(TASKS_DIR))
     badcase_groups = []
+    noise_level_values = []
     for task in tasks:
         task_dir = str(TASKS_DIR / task["task_id"])
         task_badcases = load_badcases(task_dir)
         if not task_badcases:
             continue
 
+        environment = task.get("environment", {}) or {}
+        noise_level_values.append(environment.get("noise_level", ""))
+
         items = []
         for badcase in task_badcases:
             item = dict(badcase)
+            noise_level_values.append((item.get("environment", {}) or {}).get("noise_level", ""))
             item["task_id"] = task["task_id"]
             item["task_name"] = task["task_name"]
             item["task_type"] = task.get("task_type", "wake")
@@ -230,7 +263,7 @@ async def badcases_page(request: Request):
             "task_name": task["task_name"],
             "task_type": task.get("task_type", "wake"),
             "create_time": task.get("create_time", ""),
-            "environment": task.get("environment", {}),
+            "environment": environment,
             "total_files": task.get("total_files", 0),
             "badcase_items": items
         })
@@ -242,7 +275,7 @@ async def badcases_page(request: Request):
         "badcase_groups": badcase_groups,
         "distances": DEFAULT_DISTANCES,
         "angles": DEFAULT_ANGLES,
-        "noise_levels": DEFAULT_NOISE_LEVELS
+        "noise_levels": merge_unique_options(DEFAULT_NOISE_LEVELS, noise_level_values)
     })
 
 
@@ -280,16 +313,17 @@ async def upload_files(
         wav_files = []
         
         for upload_file in files:
-            file_path = os.path.join(temp_dir, upload_file.filename)
+            safe_filename = sanitize_upload_filename(upload_file.filename)
+            file_path = unique_upload_path(temp_dir, safe_filename)
             with open(file_path, "wb") as f:
                 shutil.copyfileobj(upload_file.file, f)
             
             # 如果是ZIP文件，解压
-            if upload_file.filename.lower().endswith('.zip'):
+            if safe_filename.lower().endswith('.zip'):
                 extract_dir = os.path.join(temp_dir, "extracted")
                 extracted = extract_zip(file_path, extract_dir)
                 wav_files.extend(extracted)
-            elif upload_file.filename.lower().endswith('.wav'):
+            elif safe_filename.lower().endswith('.wav'):
                 wav_files.append(file_path)
         
         if not wav_files:
@@ -338,6 +372,8 @@ async def upload_files(
             "task": config
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         # 清理
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -474,10 +510,10 @@ async def api_update_task_name(task_id: str, request: Request):
     data = await request.json()
     task_name = str(data.get("task_name", "")).strip()
     if not task_name:
-        raise HTTPException(status_code=400, detail="????????")
+        raise HTTPException(status_code=400, detail="任务名称不能为空")
     if update_task_name(task_dir, task_name):
         return JSONResponse(content={"success": True, "task_name": task_name})
-    raise HTTPException(status_code=404, detail="?????")
+    raise HTTPException(status_code=404, detail="任务不存在")
 
 
 @app.post("/api/datasets")
@@ -489,22 +525,23 @@ async def api_create_dataset(
     if not dataset_name:
         dataset_name = f"数据集_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
     
-    temp_dir = str(UPLOADS_DIR / f"dataset_tmp_{datetime.now().strftime('%Y%m%d%H%M%S')}")
+    temp_dir = str(UPLOADS_DIR / f"dataset_tmp_{datetime.now().strftime('%Y%m%d%H%M%S_%f')}")
     os.makedirs(temp_dir, exist_ok=True)
     
     try:
         wav_files = []
         
         for upload_file in files:
-            file_path = os.path.join(temp_dir, upload_file.filename)
+            safe_filename = sanitize_upload_filename(upload_file.filename)
+            file_path = unique_upload_path(temp_dir, safe_filename)
             with open(file_path, "wb") as f:
                 shutil.copyfileobj(upload_file.file, f)
             
-            if upload_file.filename.lower().endswith('.zip'):
+            if safe_filename.lower().endswith('.zip'):
                 extract_dir = os.path.join(temp_dir, "extracted")
                 extracted = extract_zip(file_path, extract_dir)
                 wav_files.extend(extracted)
-            elif upload_file.filename.lower().endswith('.wav'):
+            elif safe_filename.lower().endswith('.wav'):
                 wav_files.append(file_path)
         
         if not wav_files:
@@ -531,6 +568,8 @@ async def api_create_dataset(
         
         return JSONResponse(content={"success": True, "dataset": meta})
         
+    except HTTPException:
+        raise
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"创建数据集失败: {str(e)}")
@@ -664,6 +703,8 @@ async def api_create_task_from_dataset(
             "task": config
         })
         
+    except HTTPException:
+        raise
     except Exception as e:
         shutil.rmtree(task_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"合成失败: {str(e)}")
@@ -784,7 +825,10 @@ async def api_export_badcases(
     if selected_keys:
         all_badcases = [b for b in all_badcases if b.get("selected_key") in selected_keys]
 
-    export_path = str(UPLOADS_DIR / f"badcases_export_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv")
+    if not all_badcases:
+        raise HTTPException(status_code=404, detail="没有可导出的badcase")
+
+    export_path = str(UPLOADS_DIR / f"badcases_export_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.csv")
 
     selected_task_ids = {str(b.get("task_id", "")) for b in all_badcases if b.get("task_id")}
     if len(selected_task_ids) == 1:

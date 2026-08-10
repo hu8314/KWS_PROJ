@@ -338,7 +338,6 @@ function applyFilters() {
             const visible = matchKeyword && matchTaskType && matchDistance && matchAngle && matchNoiseLevel;
             row.style.display = visible ? 'flex' : 'none';
             if (visible) {
-                setRowSelected(row, true);
                 visibleCount += 1;
             }
         });
@@ -360,7 +359,7 @@ function toggleGroup(card, forceExpand = null) {
 }
 
 function exportSelected() {
-    const selected = getAllItemRows()
+    const selected = getVisibleRows()
         .filter(isRowSelected)
         .map(row => row.dataset.selectedKey)
         .filter(Boolean);

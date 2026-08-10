@@ -16,14 +16,27 @@ from pydub import AudioSegment
 
 def generate_task_id() -> str:
     """生成任务ID"""
-    return datetime.now().strftime("task_%Y%m%d_%H%M%S")
+    return datetime.now().strftime("task_%Y%m%d_%H%M%S_%f")
 
 
 def extract_zip(zip_path: str, extract_to: str) -> List[str]:
     """解压ZIP文件，返回所有WAV文件路径列表"""
     wav_files = []
+    extract_root = os.path.abspath(extract_to)
+    os.makedirs(extract_root, exist_ok=True)
     with zipfile.ZipFile(zip_path, 'r') as zf:
-        zf.extractall(extract_to)
+        for member in zf.infolist():
+            member_name = member.filename.replace('\\', '/')
+            if not member_name or member_name.endswith('/'):
+                continue
+            if member_name.startswith('/') or ':' in member_name.split('/', 1)[0]:
+                continue
+            target_path = os.path.abspath(os.path.join(extract_root, member_name))
+            if os.path.commonpath([extract_root, target_path]) != extract_root:
+                continue
+            os.makedirs(os.path.dirname(target_path), exist_ok=True)
+            with zf.open(member) as source, open(target_path, 'wb') as target:
+                shutil.copyfileobj(source, target)
     
     # 递归查找所有wav文件并按文件名排序
     for root, dirs, files in os.walk(extract_to):
@@ -339,7 +352,7 @@ def update_task_name(task_dir: str, task_name: str) -> bool:
 
 def generate_dataset_id() -> str:
     """生成数据集ID"""
-    return datetime.now().strftime("dataset_%Y%m%d_%H%M%S")
+    return datetime.now().strftime("dataset_%Y%m%d_%H%M%S_%f")
 
 
 def create_dataset(dataset_name: str, file_paths: List[str], datasets_dir: str) -> Dict[str, Any]:
@@ -603,7 +616,6 @@ def export_badcases_to_csv(badcases: List[Dict[str, Any]],
             writer.writerow(["正确率", f"{voiceprint_accuracy:.2%}"])
             writer.writerow(["FRR", f"{frr:.2%}"])
             writer.writerow(["FAR", f"{far:.2%}"])
-            writer.writerow(["RAR", f"{far:.2%}"])
             writer.writerow(["总数", len(badcases)])
         elif all_wake:
             writer.writerow(["总音频", total_audio])

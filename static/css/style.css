@@ -97,6 +97,10 @@ body {
     margin: 0 auto;
 }
 
+body:has(.dataset-management-layout) .main-content {
+    max-width: 1520px;
+}
+
 /* ========== 页头 ========== */
 .page-header {
     display: flex;
@@ -1687,7 +1691,7 @@ body {
 /* ========== 数据集页面 ========== */
 .dataset-management-layout {
     display: grid;
-    grid-template-columns: 230px minmax(0, 1fr);
+    grid-template-columns: 215px minmax(0, 1fr);
     gap: 22px;
     align-items: start;
 }
@@ -1698,7 +1702,7 @@ body {
     display: flex;
     flex-direction: column;
     gap: 10px;
-    padding: 14px;
+    padding: 14px 12px 14px 10px;
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 14px;
@@ -1710,7 +1714,7 @@ body {
     align-items: center;
     gap: 12px;
     width: 100%;
-    padding: 12px 13px;
+    padding: 12px 12px 12px 8px;
     border: 1px solid transparent;
     border-radius: 12px;
     background: transparent;
