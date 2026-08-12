@@ -109,13 +109,10 @@
             <p>预计总时长约 <strong id="previewDuration">0</strong> 秒</p>
         </div>
 
-        <button class="btn btn-primary btn-block" id="startBtn" disabled>
-            🚀 开始合成
+        <button class="btn btn-primary btn-block synthesis-action-btn" id="startBtn" type="button" data-state="idle" disabled>
+            <span class="synthesis-btn-fill" id="progressFill"></span>
+            <span class="synthesis-btn-text" id="progressText">🚀 开始合成</span>
         </button>
-        <div class="progress-bar" id="progressBar" style="display:none;">
-            <div class="progress-fill" id="progressFill"></div>
-            <span class="progress-text" id="progressText">0%</span>
-        </div>
     </div>
 </div>
 {% endblock %}
@@ -126,7 +123,6 @@ const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const fileList = document.getElementById('fileList');
 const startBtn = document.getElementById('startBtn');
-const progressBar = document.getElementById('progressBar');
 const progressFill = document.getElementById('progressFill');
 const progressText = document.getElementById('progressText');
 const previewInfo = document.getElementById('previewInfo');
@@ -139,6 +135,139 @@ const voiceprintCounts = document.getElementById('voiceprintCounts');
 let selectedFiles = [];
 let selectedDatasetId = null;
 let availableDatasets = [];
+let synthesisJobId = null;
+let synthesisPollTimer = null;
+let synthesisState = 'idle';
+let openedSynthesisTaskId = null;
+
+function hasSynthesisSource() {
+    const activeTab = document.querySelector('.tab-content.active').id;
+    return activeTab === 'uploadTab' ? selectedFiles.length > 0 : Boolean(selectedDatasetId);
+}
+
+function setSynthesisButton(text, state = 'idle', width = '0%', title = '') {
+    synthesisState = state;
+    startBtn.dataset.state = state;
+    progressFill.style.width = width;
+    progressText.textContent = text;
+    startBtn.title = title;
+    startBtn.classList.toggle('has-progress', state !== 'idle');
+    updateStartButton();
+}
+
+function resetSynthesisButton() {
+    stopSynthesisPolling();
+    synthesisJobId = null;
+    openedSynthesisTaskId = null;
+    setSynthesisButton('🚀 开始合成', 'idle', '0%', '');
+}
+
+function stopSynthesisPolling() {
+    if (synthesisPollTimer) {
+        clearInterval(synthesisPollTimer);
+        synthesisPollTimer = null;
+    }
+}
+
+function startSynthesisPolling() {
+    stopSynthesisPolling();
+    synthesisPollTimer = setInterval(pollSynthesisJob, 700);
+}
+
+function clampPercent(value) {
+    const percent = Number(value);
+    if (!Number.isFinite(percent)) return 0;
+    return Math.min(100, Math.max(0, percent));
+}
+
+function renderSynthesisJob(job) {
+    if (!job) return;
+    const width = `${clampPercent(job.percent)}%`;
+    const progressTextSuffix = job.total ? `${job.processed || 0}/${job.total}` : '';
+    const message = job.message || (progressTextSuffix ? `合成中 ${progressTextSuffix}` : '合成中...');
+
+    if (job.status === 'queued' || job.status === 'running') {
+        setSynthesisButton(message, 'running', width, '点击暂停合成');
+    } else if (job.status === 'paused') {
+        setSynthesisButton(message || '已暂停，点击继续合成', 'paused', width, '点击继续合成');
+    } else if (job.status === 'done') {
+        stopSynthesisPolling();
+        setSynthesisButton('合成成功，正在打开任务...', 'done', '100%', '合成成功');
+        openSynthesisTask(job);
+    } else if (job.status === 'error') {
+        stopSynthesisPolling();
+        const errorTitle = job.error ? `合成失败：${job.error}。点击重新合成` : '点击重新合成';
+        setSynthesisButton(job.error ? `合成失败：${job.error}` : '合成失败，点击重新开始', 'error', '0%', errorTitle);
+    }
+}
+
+function openSynthesisTask(job) {
+    if (!job.task_id || openedSynthesisTaskId === job.task_id) return;
+    openedSynthesisTaskId = job.task_id;
+    setTimeout(() => {
+        if (window.AudioLabCurrentTask) {
+            window.AudioLabCurrentTask.set({
+                taskId: job.task_id,
+                taskName: job.task_name || document.getElementById('taskName').value || '测试任务',
+                url: `/player/${job.task_id}`,
+                updatedAt: Date.now()
+            });
+            window.open(`/player/${job.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
+        } else {
+            window.location.href = `/player/${job.task_id}`;
+        }
+        setTimeout(resetSynthesisButton, 1200);
+    }, 500);
+}
+
+async function parseErrorMessage(res, fallback) {
+    try {
+        const data = await res.json();
+        return data.detail || data.error || fallback;
+    } catch (e) {
+        return fallback;
+    }
+}
+
+async function pollSynthesisJob() {
+    if (!synthesisJobId) return;
+    try {
+        const res = await fetch(`/api/synthesis-jobs/${encodeURIComponent(synthesisJobId)}`);
+        if (!res.ok) throw new Error(await parseErrorMessage(res, '获取合成进度失败'));
+        const data = await res.json();
+        renderSynthesisJob(data.job);
+    } catch (e) {
+        stopSynthesisPolling();
+        setSynthesisButton(`进度获取失败：${e.message}`, 'error', '0%', '点击重新合成');
+    }
+}
+
+async function pauseSynthesisJob() {
+    if (!synthesisJobId) return;
+    setSynthesisButton('正在暂停...', 'pausing', progressFill.style.width || '0%', '正在暂停合成');
+    try {
+        const res = await fetch(`/api/synthesis-jobs/${encodeURIComponent(synthesisJobId)}/pause`, { method: 'POST' });
+        if (!res.ok) throw new Error(await parseErrorMessage(res, '暂停失败'));
+        const data = await res.json();
+        renderSynthesisJob(data.job);
+    } catch (e) {
+        setSynthesisButton(`暂停失败：${e.message}`, 'error', progressFill.style.width || '0%', '点击重新合成');
+    }
+}
+
+async function resumeSynthesisJob() {
+    if (!synthesisJobId) return;
+    setSynthesisButton('继续合成中...', 'running', progressFill.style.width || '0%', '点击暂停合成');
+    try {
+        const res = await fetch(`/api/synthesis-jobs/${encodeURIComponent(synthesisJobId)}/resume`, { method: 'POST' });
+        if (!res.ok) throw new Error(await parseErrorMessage(res, '继续失败'));
+        const data = await res.json();
+        renderSynthesisJob(data.job);
+        startSynthesisPolling();
+    } catch (e) {
+        setSynthesisButton(`继续失败：${e.message}`, 'error', progressFill.style.width || '0%', '点击重新合成');
+    }
+}
 
 function updateVoiceprintCountVisibility() {
     voiceprintCounts.style.display = taskTypeSelect.value === 'voiceprint' ? 'flex' : 'none';
@@ -177,12 +306,15 @@ function handleFiles(files) {
 function updateFileList() {
     if (selectedFiles.length === 0) {
         fileList.innerHTML = '';
-        startBtn.disabled = true;
         previewInfo.style.display = 'none';
+        updateStartButton();
         return;
     }
 
-    let html = '<h4>已选择文件</h4><ul>';
+    fileList.innerHTML = '';
+    const title = document.createElement('h4');
+    title.textContent = '已选择文件';
+    const list = document.createElement('ul');
     let wavCount = 0;
     let hasZip = false;
     
@@ -192,17 +324,21 @@ function updateFileList() {
         if (isWav) wavCount++;
         if (isZip) hasZip = true;
         const icon = isZip ? 'ZIP' : (isWav ? 'WAV' : 'FILE');
-        html += `<li>${icon} ${f.name} <small>(${(f.size/1024/1024).toFixed(2)} MB)</small></li>`;
+        const item = document.createElement('li');
+        const size = document.createElement('small');
+        item.append(document.createTextNode(`${icon} ${f.name} `));
+        size.textContent = `(${(f.size / 1024 / 1024).toFixed(2)} MB)`;
+        item.appendChild(size);
+        list.appendChild(item);
     });
-    html += '</ul>';
-    fileList.innerHTML = html;
+    fileList.append(title, list);
     
     // 预估
     const silence = parseInt(document.getElementById('silenceDuration').value) || 3;
     previewCount.textContent = hasZip ? '若干' : wavCount;
     previewDuration.textContent = hasZip ? '未知' : (wavCount * (2 + silence));
     previewInfo.style.display = 'block';
-    startBtn.disabled = false;
+    updateStartButton();
 }
 
 // ===== 标签页切换 =====
@@ -228,7 +364,12 @@ async function loadDatasets() {
         availableDatasets = data.datasets || [];
         renderDatasetList();
     } catch (e) {
-        datasetSelectArea.innerHTML = `<p class="hint" style="color:var(--danger)">加载失败: ${e.message}</p>`;
+        datasetSelectArea.innerHTML = '';
+        const error = document.createElement('p');
+        error.className = 'hint';
+        error.style.color = 'var(--danger)';
+        error.textContent = `加载失败: ${e.message}`;
+        datasetSelectArea.appendChild(error);
     }
 }
 
@@ -243,17 +384,24 @@ function renderDatasetList() {
         return;
     }
     
-    let html = '<div class="dataset-list-select">';
+    datasetSelectArea.innerHTML = '';
+    const list = document.createElement('div');
+    list.className = 'dataset-list-select';
     availableDatasets.forEach(ds => {
-        html += `
-            <div class="dataset-option" data-id="${ds.dataset_id}" onclick="selectDataset('${ds.dataset_id}')">
-                <div class="dataset-option-name">${ds.dataset_name}</div>
-                <div class="dataset-option-meta">${ds.total_files} 个文件 · ${ds.create_time}</div>
-            </div>
-        `;
+        const option = document.createElement('div');
+        const name = document.createElement('div');
+        const meta = document.createElement('div');
+        option.className = 'dataset-option';
+        option.dataset.id = ds.dataset_id;
+        option.addEventListener('click', () => selectDataset(ds.dataset_id));
+        name.className = 'dataset-option-name';
+        name.textContent = ds.dataset_name;
+        meta.className = 'dataset-option-meta';
+        meta.textContent = `${ds.total_files} 个文件 · ${ds.create_time}`;
+        option.append(name, meta);
+        list.appendChild(option);
     });
-    html += '</div>';
-    datasetSelectArea.innerHTML = html;
+    datasetSelectArea.appendChild(list);
 }
 
 function selectDataset(datasetId) {
@@ -273,21 +421,26 @@ function selectDataset(datasetId) {
 }
 
 function updateStartButton() {
-    const activeTab = document.querySelector('.tab-content.active').id;
-    if (activeTab === 'uploadTab') {
-        startBtn.disabled = selectedFiles.length === 0;
-    } else {
-        startBtn.disabled = !selectedDatasetId;
+    if (synthesisState === 'running' || synthesisState === 'paused') {
+        startBtn.disabled = false;
+        return;
     }
+    if (synthesisState === 'starting' || synthesisState === 'pausing' || synthesisState === 'done') {
+        startBtn.disabled = true;
+        return;
+    }
+    startBtn.disabled = !hasSynthesisSource();
 }
 
-startBtn.addEventListener('click', async () => {
+async function createSynthesisJob() {
     const activeTab = document.querySelector('.tab-content.active').id;
-    
-    startBtn.disabled = true;
-    progressBar.style.display = 'block';
-    progressFill.style.width = '50%';
-    progressText.textContent = '合成中...';
+    if (activeTab === 'uploadTab' && selectedFiles.length === 0) return;
+    if (activeTab === 'datasetTab' && !selectedDatasetId) return;
+
+    stopSynthesisPolling();
+    synthesisJobId = null;
+    openedSynthesisTaskId = null;
+    setSynthesisButton('正在提交合成...', 'starting', '4%', '正在提交合成');
     
     const commonParams = {
         task_name: document.getElementById('taskName').value || `测试任务_${new Date().toLocaleString()}`,
@@ -305,50 +458,52 @@ startBtn.addEventListener('click', async () => {
     
     try {
         let res;
+        const formData = new FormData();
+        Object.entries(commonParams).forEach(([k, v]) => formData.append(k, v));
+
         if (activeTab === 'uploadTab') {
-            // 上传新文件模式
-            if (selectedFiles.length === 0) return;
-            const formData = new FormData();
             selectedFiles.forEach(f => formData.append('files', f));
-            Object.entries(commonParams).forEach(([k, v]) => formData.append(k, v));
-            res = await fetch('/api/upload', { method: 'POST', body: formData });
+            res = await fetch('/api/synthesis-jobs/upload', { method: 'POST', body: formData });
         } else {
-            // 选择已有数据集模式
-            if (!selectedDatasetId) return;
-            const formData = new FormData();
             formData.append('dataset_id', selectedDatasetId);
-            Object.entries(commonParams).forEach(([k, v]) => formData.append(k, v));
-            res = await fetch('/api/tasks/from-dataset', { method: 'POST', body: formData });
+            res = await fetch('/api/synthesis-jobs/from-dataset', { method: 'POST', body: formData });
         }
+
+        if (!res.ok) throw new Error(await parseErrorMessage(res, '创建合成作业失败'));
         
         const data = await res.json();
-        
-        if (data.success) {
-            progressFill.style.width = '100%';
-            progressText.textContent = '完成!';
-            setTimeout(() => {
-                if (window.AudioLabCurrentTask) {
-                    window.AudioLabCurrentTask.set({
-                        taskId: data.task_id,
-                        taskName: data.task ? data.task.task_name : commonParams.task_name,
-                        url: `/player/${data.task_id}`,
-                        updatedAt: Date.now()
-                    });
-                    window.open(`/player/${data.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
-                } else {
-                    window.location.href = `/player/${data.task_id}`;
-                }
-            }, 500);
-        } else {
-            alert('合成失败: ' + (data.detail || '未知错误'));
-            startBtn.disabled = false;
-            progressBar.style.display = 'none';
-        }
+        if (!data.success) throw new Error(data.detail || data.error || '创建合成作业失败');
+
+        synthesisJobId = data.job_id || data.task_id;
+        renderSynthesisJob(data.job || {
+            status: 'running',
+            percent: 8,
+            processed: 0,
+            total: activeTab === 'datasetTab' ? Number(previewCount.textContent) || 0 : selectedFiles.length,
+            message: '合成中...'
+        });
+        startSynthesisPolling();
+        await pollSynthesisJob();
     } catch (e) {
-        alert('上传失败: ' + e.message);
-        startBtn.disabled = false;
-        progressBar.style.display = 'none';
+        synthesisJobId = null;
+        stopSynthesisPolling();
+        setSynthesisButton(`创建失败：${e.message}`, 'error', '0%', '点击重新合成');
     }
+}
+
+startBtn.addEventListener('click', async () => {
+    if (synthesisState === 'running') {
+        await pauseSynthesisJob();
+        return;
+    }
+    if (synthesisState === 'paused') {
+        await resumeSynthesisJob();
+        return;
+    }
+    if (synthesisState === 'starting' || synthesisState === 'pausing' || synthesisState === 'done') {
+        return;
+    }
+    await createSynthesisJob();
 });
 
 // 参数变化时更新预估

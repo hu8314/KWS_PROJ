@@ -65,7 +65,7 @@
                 <label for="wakeKeywordInput">自动标注匹配关键词</label>
                 <input type="text" id="wakeKeywordInput" placeholder="keyword">
             </div>
-            <div class="wake-keyword-hint">多关键词中间加逗号</div>
+            <div class="wake-keyword-hint">多个关键词需全部命中，中间加逗号</div>
         </div>
         {% endif %}
     </div>
@@ -350,6 +350,11 @@ const retestMessage = document.getElementById('retestMessage');
 let isPlaying = false;
 let currentIndex = -1;
 let currentTaskRedirecting = false;
+let pendingProgressFrame = null;
+let pendingProgressCurrent = 0;
+let lastRenderedTimeText = '';
+const TERMINAL_MAX_NODES = 300;
+const TERMINAL_BOTTOM_THRESHOLD_PX = 24;
 
 function setPlayButtonState(playing) {
     btnPlay.dataset.state = playing ? 'pause' : 'play';
@@ -400,7 +405,7 @@ initSshPanelResize();
 
 // ========== 自动标注状态 ==========
 const WAKE_LOG_KEYWORDS_STORAGE_KEY = `audiolab.wakeLogKeywords.${taskId}`;
-const DEFAULT_WAKE_LOG_KEYWORDS = 'keyword';
+const DEFAULT_WAKE_LOG_KEYWORDS = 'keyword:';
 const AUTO_LABEL_NO_LOG_NOTE = '自动标注：未识别到，播放片段及间隔时间内没有出现新日志';
 const AUTO_LABEL_NO_KEYWORD_NOTE_PREFIX = '自动标注：未识别到关键词，出现的新日志：';
 const VOICEPRINT_EXPECTED_NUMBER_RE = /^(\d{2})/;
@@ -459,20 +464,31 @@ function getCurrentIndex(currentTime) {
 // ========== 更新当前文件显示 ==========
 function updateCurrentFile(idx) {
     if (idx < 0 || idx >= timestamps.length) return;
+    const previousIndex = currentIndex;
     currentIndex = idx;
     const ts = timestamps[idx];
     currentFileName.textContent = ts.filename;
     currentFileTime.textContent = `${ts.start_time.toFixed(2)}s - ${ts.end_time.toFixed(2)}s`;
-    
-    // 高亮文件列表
-    fileItems.forEach((item, i) => {
-        if (i === idx) {
-            item.classList.add('active');
-            item.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        } else {
-            item.classList.remove('active');
-        }
-    });
+
+    if (previousIndex >= 0 && previousIndex < fileItems.length && previousIndex !== idx) {
+        fileItems[previousIndex].classList.remove('active');
+    }
+
+    const activeItem = fileItems[idx];
+    if (!activeItem) return;
+    activeItem.classList.add('active');
+    scrollFileItemIntoViewIfNeeded(activeItem);
+}
+
+function scrollFileItemIntoViewIfNeeded(item) {
+    if (!fileList || !item) return;
+    const listRect = fileList.getBoundingClientRect();
+    const itemRect = item.getBoundingClientRect();
+    if (itemRect.top < listRect.top) {
+        fileList.scrollTop -= listRect.top - itemRect.top;
+    } else if (itemRect.bottom > listRect.bottom) {
+        fileList.scrollTop += itemRect.bottom - listRect.bottom;
+    }
 }
 
 function registerCurrentTask() {
@@ -626,6 +642,7 @@ btnPlay.addEventListener('click', () => {
 btnStop.addEventListener('click', () => {
     audio.pause();
     audio.currentTime = 0;
+    syncPlaybackPosition();
     setPlayButtonState(false);
     isPlaying = false;
 });
@@ -635,13 +652,37 @@ audio.addEventListener('loadedmetadata', () => {
     timeTotal.textContent = formatTime(audio.duration);
 });
 
-audio.addEventListener('timeupdate', () => {
-    const current = audio.currentTime;
+function renderProgress(current) {
     const duration = audio.duration || 1;
-    const pct = (current / duration) * 100;
+    const pct = Math.min(100, Math.max(0, (current / duration) * 100));
     progressPlayed.style.width = pct + '%';
     progressHandle.style.left = pct + '%';
-    timeCurrent.textContent = formatTime(current);
+    const timeText = formatTime(current);
+    if (timeText !== lastRenderedTimeText) {
+        timeCurrent.textContent = timeText;
+        lastRenderedTimeText = timeText;
+    }
+}
+
+function scheduleProgressRender(current) {
+    pendingProgressCurrent = current;
+    if (pendingProgressFrame !== null) return;
+    pendingProgressFrame = window.requestAnimationFrame(() => {
+        pendingProgressFrame = null;
+        renderProgress(pendingProgressCurrent);
+    });
+}
+
+function syncPlaybackPosition() {
+    const current = audio.currentTime || 0;
+    renderProgress(current);
+    const idx = getCurrentIndex(current);
+    if (idx !== currentIndex) updateCurrentFile(idx);
+}
+
+audio.addEventListener('timeupdate', () => {
+    const current = audio.currentTime;
+    scheduleProgressRender(current);
     
     const idx = getCurrentIndex(current);
     if (idx !== currentIndex) {
@@ -665,6 +706,7 @@ progressTrack.addEventListener('click', (e) => {
     const rect = progressTrack.getBoundingClientRect();
     const pct = (e.clientX - rect.left) / rect.width;
     audio.currentTime = pct * (audio.duration || 0);
+    syncPlaybackPosition();
 });
 
 // ========== 文件列表点击 ==========
@@ -676,6 +718,7 @@ fileItems.forEach((item, idx) => {
 
 function jumpToTime(time) {
     audio.currentTime = time;
+    syncPlaybackPosition();
     if (!isPlaying) {
         audio.play();
         setPlayButtonState(true);
@@ -693,16 +736,18 @@ fileSearch.addEventListener('input', (e) => {
 });
 
 // ========== 自动标注 ==========
-function updateAutoLabelStatus(message = '') {
+function updateAutoLabelStatus(message = '', options = {}) {
     autoLabelState.textContent = `自动标注：${autoLabelEnabled ? '运行中' : '关闭'}`;
     btnAutoLabel.textContent = autoLabelEnabled ? '关闭自动标注' : '开启自动标注';
     autoLabelPassedCountEl.textContent = autoLabelPassedCount;
     autoLabelMarkedCountEl.textContent = autoLabelMarkedCount;
     autoLabelMessage.textContent = message;
     if (autoLabelStatusTimer) clearTimeout(autoLabelStatusTimer);
-    if (message) {
+    autoLabelStatusTimer = null;
+    if (message && !options.persist) {
         autoLabelStatusTimer = setTimeout(() => {
             autoLabelMessage.textContent = '';
+            autoLabelStatusTimer = null;
         }, 4000);
     }
 }
@@ -739,6 +784,7 @@ function setRetestCurrentRunPhase(phase) {
 
 async function playRetestAudioFrom(time) {
     audio.currentTime = Math.max(0, Number(time) || 0);
+    syncPlaybackPosition();
     try {
         await audio.play();
         setPlayButtonState(true);
@@ -756,8 +802,12 @@ async function playRetestAudioFrom(time) {
 function parseWakeLogKeywords(value) {
     return String(value || '')
         .split(/[，,\n\r\t ]+/)
-        .map(item => item.trim().toLowerCase())
+        .map(item => normalizeWakeKeywordText(item))
         .filter(Boolean);
+}
+
+function normalizeWakeKeywordText(value) {
+    return String(value || '').trim().toLowerCase().replace(/：/g, ':');
 }
 
 function getWakeLogKeywords() {
@@ -772,17 +822,49 @@ function initWakeLogKeywordInput() {
     try {
         savedValue = window.localStorage.getItem(WAKE_LOG_KEYWORDS_STORAGE_KEY) || '';
     } catch (e) {}
-    wakeKeywordInput.value = savedValue.trim() || DEFAULT_WAKE_LOG_KEYWORDS;
+    const normalizedSavedValue = savedValue.trim();
+    wakeKeywordInput.value = normalizedSavedValue === 'keyword' ? DEFAULT_WAKE_LOG_KEYWORDS : (normalizedSavedValue || DEFAULT_WAKE_LOG_KEYWORDS);
     wakeKeywordInput.addEventListener('input', () => {
         try {
             window.localStorage.setItem(WAKE_LOG_KEYWORDS_STORAGE_KEY, wakeKeywordInput.value.trim() || DEFAULT_WAKE_LOG_KEYWORDS);
         } catch (e) {}
+        recheckWakeLogKeywordMatches();
     });
 }
 
 function isWakeLogLine(line) {
-    const normalizedLine = String(line || '').toLowerCase();
-    return getWakeLogKeywords().some(keyword => normalizedLine.includes(keyword));
+    return getWakeLogMatchedKeywords(line).length > 0;
+}
+
+function getWakeLogMatchedKeywords(line) {
+    const normalizedLine = normalizeWakeKeywordText(line);
+    return getWakeLogKeywords().filter(keyword => normalizedLine.includes(keyword));
+}
+
+function getAllWakeLogKeywordsMatched(matchedKeywords) {
+    const keywords = getWakeLogKeywords();
+    if (keywords.length === 0) return false;
+    return keywords.every(keyword => matchedKeywords.has(keyword));
+}
+
+function formatMatchedWakeKeywords(matchedKeywords) {
+    return Array.from(matchedKeywords || []).join(' + ');
+}
+
+function recheckWakeLogKeywordMatches() {
+    if (!autoLabelEnabled || taskType === 'voiceprint') return;
+    autoLabelWindows.forEach(state => {
+        if (!state || state.finalized || state.keywordHit) return;
+        if (!Array.isArray(state.logLines) || state.logLines.length === 0) return;
+        state.matchedKeywords = new Set();
+        state.logLines.forEach(line => {
+            getWakeLogMatchedKeywords(line).forEach(keyword => state.matchedKeywords.add(keyword));
+        });
+        if (getAllWakeLogKeywordsMatched(state.matchedKeywords)) {
+            state.keywordHit = true;
+            markAutoPassed(state.filename);
+        }
+    });
 }
 
 function getVoiceprintSequenceIndex(ts) {
@@ -914,6 +996,7 @@ function ensureAutoLabelWindowForIndex(idx, current = audio.currentTime || 0) {
         windowEnd,
         hasLog: false,
         keywordHit: false,
+        matchedKeywords: new Set(),
         logLines: [],
         speakerEvents: [],
         finalized: false
@@ -934,7 +1017,10 @@ function markAutoPassed(filename) {
     const state = autoLabelWindows.get(filename);
     if (state) state.finalized = true;
     autoLabelPassedCount += 1;
-    updateAutoLabelStatus(`已检测到关键词：${filename}`);
+    const keywordText = state && state.matchedKeywords && state.matchedKeywords.size > 0
+        ? `“${formatMatchedWakeKeywords(state.matchedKeywords)}”`
+        : '全部关键词';
+    updateAutoLabelStatus(`已检测到${keywordText}：${filename}`, { persist: true });
 }
 
 function processAutoLabelLogOutput(output) {
@@ -953,8 +1039,9 @@ function processAutoLabelLogOutput(output) {
             if (speaker || /speaker:/i.test(line)) {
                 state.speakerEvents.push({ line, speaker: speaker || 'none' });
             }
-        } else if (isWakeLogLine(line)) {
-            state.keywordHit = true;
+        } else {
+            getWakeLogMatchedKeywords(line).forEach(keyword => state.matchedKeywords.add(keyword));
+            state.keywordHit = getAllWakeLogKeywordsMatched(state.matchedKeywords);
         }
     });
 
@@ -970,9 +1057,10 @@ function processRetestLogOutput(output) {
     output.split(/\r?\n/).forEach(rawLine => {
         const line = rawLine.trim();
         if (!line) return;
-        if (isWakeLogLine(line)) {
-            retestSession.currentRun.detected = true;
-        }
+        const matchedKeywords = retestSession.currentRun.matchedKeywords || new Set();
+        getWakeLogMatchedKeywords(line).forEach(keyword => matchedKeywords.add(keyword));
+        retestSession.currentRun.matchedKeywords = matchedKeywords;
+        retestSession.currentRun.detected = getAllWakeLogKeywordsMatched(matchedKeywords);
     });
 }
 
@@ -1161,6 +1249,7 @@ async function runRetestAll() {
                     filename: entry.filename,
                     attempt,
                     detected: false,
+                    matchedKeywords: new Set(),
                     phase: 'ready'
                 };
                 updateRetestStatus(`复测 ${retestSession.processed + 1}/${queue.length}：${entry.filename} 第 ${attempt}/${RETEST_REPEAT_COUNT} 次`);
@@ -1554,10 +1643,24 @@ const sshHostDisplay = document.getElementById('sshHostDisplay');
 
 function appendTerminal(text) {
     if (!text) return;
+    const shouldFollow = isTerminalNearBottom(sshTerminal);
     const span = document.createElement('span');
     span.textContent = text;
     sshTerminal.appendChild(span);
-    sshTerminal.scrollTop = sshTerminal.scrollHeight;
+    trimTerminalNodes(sshTerminal);
+    if (shouldFollow) sshTerminal.scrollTop = sshTerminal.scrollHeight;
+}
+
+function isTerminalNearBottom(element) {
+    if (!element) return true;
+    return element.scrollHeight - element.scrollTop - element.clientHeight <= TERMINAL_BOTTOM_THRESHOLD_PX;
+}
+
+function trimTerminalNodes(element) {
+    if (!element) return;
+    while (element.childNodes.length > TERMINAL_MAX_NODES) {
+        element.removeChild(element.firstChild);
+    }
 }
 
 async function connectSSH() {
@@ -1714,10 +1817,12 @@ const _originalAppendTerminal = appendTerminal;
 appendTerminal = function(text) {
     _originalAppendTerminal(text);
     if (terminalModal.style.display === 'flex' && sshTerminalModal) {
+        const shouldFollow = isTerminalNearBottom(sshTerminalModal);
         const span = document.createElement('span');
         span.textContent = text;
         sshTerminalModal.appendChild(span);
-        sshTerminalModal.scrollTop = sshTerminalModal.scrollHeight;
+        trimTerminalNodes(sshTerminalModal);
+        if (shouldFollow) sshTerminalModal.scrollTop = sshTerminalModal.scrollHeight;
     }
 };
 
@@ -1756,9 +1861,11 @@ document.addEventListener('keydown', (e) => {
     } else if (e.code === 'ArrowLeft') {
         e.preventDefault();
         audio.currentTime = Math.max(0, audio.currentTime - 3);
+        syncPlaybackPosition();
     } else if (e.code === 'ArrowRight') {
         e.preventDefault();
         audio.currentTime = Math.min(audio.duration || 0, audio.currentTime + 3);
+        syncPlaybackPosition();
     } else if (e.code === 'KeyM') {
         e.preventDefault();
         if (btnMark) btnMark.click();

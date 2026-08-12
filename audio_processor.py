@@ -9,7 +9,7 @@ import wave
 import audioop
 from pathlib import Path
 from datetime import datetime
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Callable
 
 from pydub import AudioSegment
 
@@ -77,11 +77,25 @@ def convert_audio(audio: AudioSegment,
     return audio
 
 
+def load_audio_file(filepath: str,
+                    target_sample_rate: int = 16000,
+                    target_channels: int = 1,
+                    target_bit_depth: int = 16) -> AudioSegment:
+    """读取音频文件并转换成目标格式。"""
+    try:
+        audio = AudioSegment.from_wav(filepath)
+    except Exception:
+        audio = AudioSegment.from_file(filepath)
+    return convert_audio(audio, target_sample_rate, target_channels, target_bit_depth)
+
+
 def merge_audio_files(file_list: List[str],
                       silence_duration_ms: int = 3000,
                       target_sample_rate: int = 16000,
                       target_channels: int = 1,
-                      target_bit_depth: int = 16) -> Tuple[AudioSegment, List[Dict[str, Any]]]:
+                      target_bit_depth: int = 16,
+                      progress_callback: Optional[Callable[[int, int, str], None]] = None,
+                      pause_wait: Optional[Callable[[], None]] = None) -> Tuple[AudioSegment, List[Dict[str, Any]]]:
     """
     合并多个音频文件，中间插入静音
     
@@ -93,20 +107,18 @@ def merge_audio_files(file_list: List[str],
     timestamps = []
     current_time_ms = 0
     silence = AudioSegment.silent(duration=silence_duration_ms)
+    total_files = len(file_list)
     
     for idx, filepath in enumerate(file_list):
+        if pause_wait:
+            pause_wait()
         try:
-            audio = AudioSegment.from_wav(filepath)
-        except Exception:
-            # 尝试其他格式
-            try:
-                audio = AudioSegment.from_file(filepath)
-            except Exception as e:
-                print(f"无法读取文件 {filepath}: {e}")
-                continue
-        
-        # 转换格式
-        audio = convert_audio(audio, target_sample_rate, target_channels, target_bit_depth)
+            audio = load_audio_file(filepath, target_sample_rate, target_channels, target_bit_depth)
+        except Exception as e:
+            print(f"无法读取文件 {filepath}: {e}")
+            if progress_callback:
+                progress_callback(idx + 1, total_files, os.path.basename(filepath))
+            continue
         
         duration_ms = len(audio)
         
@@ -128,6 +140,9 @@ def merge_audio_files(file_list: List[str],
             "end_time": round(end_ms / 1000.0, 3),
             "duration": round(duration_ms / 1000.0, 3)
         })
+
+        if progress_callback:
+            progress_callback(idx + 1, total_files, os.path.basename(filepath))
     
     return merged, timestamps
 
@@ -143,7 +158,9 @@ def create_task(task_name: str,
                 source_dataset_id: Optional[str] = None,
                 task_type: str = "wake",
                 voiceprint_in_count: int = 10,
-                voiceprint_out_count: int = 10) -> Dict[str, Any]:
+                voiceprint_out_count: int = 10,
+                progress_callback: Optional[Callable[[int, int, str], None]] = None,
+                pause_wait: Optional[Callable[[], None]] = None) -> Dict[str, Any]:
     """
     创建合成任务
     
@@ -173,12 +190,16 @@ def create_task(task_name: str,
         silence_duration_ms=silence_duration * 1000,
         target_sample_rate=sample_rate,
         target_channels=channels,
-        target_bit_depth=bit_depth
+        target_bit_depth=bit_depth,
+        progress_callback=progress_callback,
+        pause_wait=pause_wait
     )
     
     total_duration = len(merged_audio) / 1000.0
     
     # 保存合成后的音频
+    if pause_wait:
+        pause_wait()
     output_audio_path = os.path.join(task_dir, "audio.wav")
     merged_audio.export(output_audio_path, format="wav")
     

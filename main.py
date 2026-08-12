@@ -173,6 +173,171 @@ def unique_upload_path(directory: str, filename: str) -> str:
     return candidate
 
 
+# ========== 合成作业管理 ==========
+synthesis_jobs: Dict[str, Dict[str, Any]] = {}
+synthesis_jobs_lock = threading.Lock()
+
+
+def synthesis_job_snapshot(job: Dict[str, Any]) -> Dict[str, Any]:
+    return {
+        "job_id": job.get("job_id"),
+        "task_id": job.get("task_id"),
+        "task_name": job.get("task_name"),
+        "status": job.get("status", "queued"),
+        "percent": job.get("percent", 0),
+        "processed": job.get("processed", 0),
+        "total": job.get("total", 0),
+        "current_file": job.get("current_file", ""),
+        "message": job.get("message", ""),
+        "error": job.get("error", ""),
+        "url": f"/player/{job.get('task_id')}" if job.get("status") == "done" else ""
+    }
+
+
+def get_synthesis_job(job_id: str) -> Optional[Dict[str, Any]]:
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        return synthesis_job_snapshot(job) if job else None
+
+
+def update_synthesis_job(job_id: str, **updates: Any) -> None:
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        if not job:
+            return
+        job.update(updates)
+        job["updated_at"] = time.time()
+
+
+def update_synthesis_progress(job_id: str, processed: int, total: int, current_file: str = "") -> None:
+    percent = 10 if total <= 0 else min(92, 10 + int((processed / max(total, 1)) * 78))
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        if not job:
+            return
+        job["processed"] = processed
+        job["total"] = total
+        job["current_file"] = current_file
+        job["percent"] = percent
+        if job.get("status") == "paused" or not job["pause_event"].is_set():
+            job["status"] = "paused"
+            job["message"] = f"已暂停 {processed}/{total}，点击继续合成"
+        else:
+            job["status"] = "running"
+            job["message"] = f"合成中 {processed}/{total}" + (f"：{current_file}" if current_file else "")
+        job["updated_at"] = time.time()
+
+
+def wait_for_synthesis_resume(job_id: str) -> None:
+    while True:
+        with synthesis_jobs_lock:
+            job = synthesis_jobs.get(job_id)
+            if not job:
+                return
+            pause_event = job["pause_event"]
+            if pause_event.is_set():
+                if job.get("status") == "paused":
+                    job["status"] = "running"
+                    job["message"] = f"继续合成中 {job.get('processed', 0)}/{job.get('total', 0)}"
+                    job["updated_at"] = time.time()
+                return
+            job["status"] = "paused"
+            job["message"] = f"已暂停 {job.get('processed', 0)}/{job.get('total', 0)}，点击继续合成"
+            job["updated_at"] = time.time()
+        pause_event.wait(0.2)
+
+
+def run_synthesis_job(job_id: str) -> None:
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        if not job:
+            return
+        params = dict(job["params"])
+        file_paths = list(job["file_paths"])
+        task_dir = job["task_dir"]
+        temp_dir = job.get("temp_dir")
+
+    try:
+        update_synthesis_job(
+            job_id,
+            status="running",
+            percent=8,
+            processed=0,
+            total=len(file_paths),
+            message=f"准备合成 0/{len(file_paths)}"
+        )
+
+        config = create_task(
+            file_paths=file_paths,
+            task_dir=task_dir,
+            progress_callback=lambda done, total, name: update_synthesis_progress(job_id, done, total, name),
+            pause_wait=lambda: wait_for_synthesis_resume(job_id),
+            **params
+        )
+
+        update_synthesis_job(
+            job_id,
+            status="done",
+            percent=100,
+            processed=len(file_paths),
+            total=len(file_paths),
+            task_name=config.get("task_name", params.get("task_name", "")),
+            message="合成成功，正在打开任务...",
+            error=""
+        )
+    except Exception as e:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        update_synthesis_job(
+            job_id,
+            status="error",
+            percent=0,
+            message="合成失败，点击重新开始",
+            error=str(e)
+        )
+    finally:
+        if temp_dir:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        update_synthesis_job(job_id, finished_at=time.time())
+
+
+def start_synthesis_job(
+    *,
+    task_id: str,
+    task_name: str,
+    file_paths: List[str],
+    task_dir: str,
+    temp_dir: Optional[str],
+    params: Dict[str, Any]
+) -> Dict[str, Any]:
+    pause_event = threading.Event()
+    pause_event.set()
+    job = {
+        "job_id": task_id,
+        "task_id": task_id,
+        "task_name": task_name,
+        "status": "queued",
+        "percent": 4,
+        "processed": 0,
+        "total": len(file_paths),
+        "current_file": "",
+        "message": "已加入合成队列",
+        "error": "",
+        "file_paths": file_paths,
+        "task_dir": task_dir,
+        "temp_dir": temp_dir,
+        "params": params,
+        "pause_event": pause_event,
+        "created_at": time.time(),
+        "updated_at": time.time()
+    }
+    thread = threading.Thread(target=run_synthesis_job, args=(task_id,), daemon=True)
+    job["thread"] = thread
+    with synthesis_jobs_lock:
+        synthesis_jobs[task_id] = job
+    thread.start()
+    return synthesis_job_snapshot(job)
+
+
 # ========== 页面路由 ==========
 # 页面模板修改后依赖运行中的热重载重新读取
 @app.get("/", response_class=HTMLResponse)
@@ -379,6 +544,200 @@ async def upload_files(
         shutil.rmtree(temp_dir, ignore_errors=True)
         shutil.rmtree(task_dir, ignore_errors=True)
         raise HTTPException(status_code=500, detail=f"合成失败: {str(e)}")
+
+
+@app.post("/api/synthesis-jobs/upload")
+async def api_create_upload_synthesis_job(
+    task_name: str = Form(""),
+    task_type: str = Form("wake"),
+    voiceprint_in_count: int = Form(10),
+    voiceprint_out_count: int = Form(10),
+    silence_duration: int = Form(3),
+    sample_rate: int = Form(16000),
+    bit_depth: int = Form(16),
+    channels: int = Form(1),
+    distance: str = Form("3m"),
+    angle: str = Form("90°"),
+    noise_level: str = Form("安静40db"),
+    files: List[UploadFile] = File(...)
+):
+    """上传文件并创建可暂停/继续的合成作业。"""
+    if task_type not in TASK_TYPES:
+        task_type = "wake"
+    voiceprint_in_count = max(0, voiceprint_in_count)
+    voiceprint_out_count = max(0, voiceprint_out_count)
+    if not task_name:
+        task_name = f"测试任务_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+    task_id = generate_task_id()
+    task_dir = str(TASKS_DIR / task_id)
+    temp_dir = str(UPLOADS_DIR / task_id)
+    os.makedirs(temp_dir, exist_ok=True)
+
+    try:
+        wav_files = []
+        for upload_file in files:
+            safe_filename = sanitize_upload_filename(upload_file.filename)
+            file_path = unique_upload_path(temp_dir, safe_filename)
+            with open(file_path, "wb") as f:
+                shutil.copyfileobj(upload_file.file, f)
+
+            if safe_filename.lower().endswith('.zip'):
+                extract_dir = os.path.join(temp_dir, "extracted")
+                wav_files.extend(extract_zip(file_path, extract_dir))
+            elif safe_filename.lower().endswith('.wav'):
+                wav_files.append(file_path)
+
+        if not wav_files:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+            raise HTTPException(status_code=400, detail="未找到有效的WAV音频文件")
+
+        seen = set()
+        unique_files = []
+        for f in wav_files:
+            basename = os.path.basename(f)
+            if basename in seen:
+                continue
+            seen.add(basename)
+            unique_files.append(f)
+        unique_files.sort(key=lambda x: os.path.basename(x))
+
+        params = {
+            "task_name": task_name,
+            "silence_duration": silence_duration,
+            "sample_rate": sample_rate,
+            "bit_depth": bit_depth,
+            "channels": channels,
+            "environment": {
+                "distance": distance,
+                "angle": angle,
+                "noise_level": noise_level
+            },
+            "source_dataset_id": None,
+            "task_type": task_type,
+            "voiceprint_in_count": voiceprint_in_count,
+            "voiceprint_out_count": voiceprint_out_count
+        }
+        job = start_synthesis_job(
+            task_id=task_id,
+            task_name=task_name,
+            file_paths=unique_files,
+            task_dir=task_dir,
+            temp_dir=temp_dir,
+            params=params
+        )
+        return JSONResponse(content={"success": True, "job_id": task_id, "task_id": task_id, "job": job})
+    except HTTPException:
+        raise
+    except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        shutil.rmtree(task_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"创建合成作业失败: {str(e)}")
+
+
+@app.post("/api/synthesis-jobs/from-dataset")
+async def api_create_dataset_synthesis_job(
+    dataset_id: str = Form(...),
+    task_name: str = Form(""),
+    task_type: str = Form("wake"),
+    voiceprint_in_count: int = Form(10),
+    voiceprint_out_count: int = Form(10),
+    silence_duration: int = Form(3),
+    sample_rate: int = Form(16000),
+    bit_depth: int = Form(16),
+    channels: int = Form(1),
+    distance: str = Form("3m"),
+    angle: str = Form("90°"),
+    noise_level: str = Form("安静40db")
+):
+    """基于数据集创建可暂停/继续的合成作业。"""
+    if task_type not in TASK_TYPES:
+        task_type = "wake"
+    voiceprint_in_count = max(0, voiceprint_in_count)
+    voiceprint_out_count = max(0, voiceprint_out_count)
+
+    dataset_dir = str(DATASETS_DIR / dataset_id)
+    meta = load_dataset_meta(dataset_dir)
+    if not meta:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+
+    file_paths = get_dataset_file_paths(dataset_dir)
+    if not file_paths:
+        raise HTTPException(status_code=400, detail="数据集内没有有效的WAV文件")
+
+    if not task_name:
+        task_name = f"{meta['dataset_name']}_{distance}_{angle}_{noise_level}"
+
+    task_id = generate_task_id()
+    task_dir = str(TASKS_DIR / task_id)
+    params = {
+        "task_name": task_name,
+        "silence_duration": silence_duration,
+        "sample_rate": sample_rate,
+        "bit_depth": bit_depth,
+        "channels": channels,
+        "environment": {
+            "distance": distance,
+            "angle": angle,
+            "noise_level": noise_level
+        },
+        "source_dataset_id": dataset_id,
+        "task_type": task_type,
+        "voiceprint_in_count": voiceprint_in_count,
+        "voiceprint_out_count": voiceprint_out_count
+    }
+
+    try:
+        job = start_synthesis_job(
+            task_id=task_id,
+            task_name=task_name,
+            file_paths=file_paths,
+            task_dir=task_dir,
+            temp_dir=None,
+            params=params
+        )
+        return JSONResponse(content={"success": True, "job_id": task_id, "task_id": task_id, "job": job})
+    except Exception as e:
+        shutil.rmtree(task_dir, ignore_errors=True)
+        raise HTTPException(status_code=500, detail=f"创建合成作业失败: {str(e)}")
+
+
+@app.get("/api/synthesis-jobs/{job_id}")
+async def api_get_synthesis_job(job_id: str):
+    job = get_synthesis_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="合成作业不存在")
+    return JSONResponse(content={"success": True, "job": job})
+
+
+@app.post("/api/synthesis-jobs/{job_id}/pause")
+async def api_pause_synthesis_job(job_id: str):
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="合成作业不存在")
+        if job.get("status") not in {"done", "error"}:
+            job["pause_event"].clear()
+            job["status"] = "paused"
+            job["message"] = f"已暂停 {job.get('processed', 0)}/{job.get('total', 0)}，点击继续合成"
+            job["updated_at"] = time.time()
+        snapshot = synthesis_job_snapshot(job)
+    return JSONResponse(content={"success": True, "job": snapshot})
+
+
+@app.post("/api/synthesis-jobs/{job_id}/resume")
+async def api_resume_synthesis_job(job_id: str):
+    with synthesis_jobs_lock:
+        job = synthesis_jobs.get(job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="合成作业不存在")
+        if job.get("status") == "paused":
+            job["pause_event"].set()
+            job["status"] = "running"
+            job["message"] = f"继续合成中 {job.get('processed', 0)}/{job.get('total', 0)}"
+            job["updated_at"] = time.time()
+        snapshot = synthesis_job_snapshot(job)
+    return JSONResponse(content={"success": True, "job": snapshot})
 
 
 @app.get("/api/tasks")
