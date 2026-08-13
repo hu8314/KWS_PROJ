@@ -16,3 +16,6 @@ __pycache__/
 # Logs and temporary render output.
 *.log
 tmp_index_rendered.html
+
+# Microsoft Office temporary lock files.
+~$*.docx
