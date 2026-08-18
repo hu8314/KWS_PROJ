@@ -88,6 +88,11 @@ body {
     display: none;
 }
 
+.nav-current-task-placeholder {
+    visibility: hidden;
+    pointer-events: none;
+}
+
 /* ========== 主内容区 ========== */
 .main-content {
     flex: 1;

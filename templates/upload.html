@@ -162,6 +162,10 @@ function resetSynthesisButton() {
     setSynthesisButton('🚀 开始合成', 'idle', '0%', '');
 }
 
+function getSynthesisTargetWindowName() {
+    return (window.AudioLabCurrentTask && window.AudioLabCurrentTask.windowName) || 'currentTaskWindow';
+}
+
 function stopSynthesisPolling() {
     if (synthesisPollTimer) {
         clearInterval(synthesisPollTimer);
@@ -204,20 +208,27 @@ function renderSynthesisJob(job) {
 function openSynthesisTask(job) {
     if (!job.task_id || openedSynthesisTaskId === job.task_id) return;
     openedSynthesisTaskId = job.task_id;
-    setTimeout(() => {
-        if (window.AudioLabCurrentTask) {
-            window.AudioLabCurrentTask.set({
-                taskId: job.task_id,
-                taskName: job.task_name || document.getElementById('taskName').value || '测试任务',
-                url: `/player/${job.task_id}`,
-                updatedAt: Date.now()
-            });
-            window.open(`/player/${job.task_id}`, window.AudioLabCurrentTask.windowName || 'currentTaskWindow');
-        } else {
-            window.location.href = `/player/${job.task_id}`;
-        }
-        setTimeout(resetSynthesisButton, 1200);
-    }, 500);
+    const taskUrl = `/player/${encodeURIComponent(job.task_id)}`;
+    const taskName = job.task_name || document.getElementById('taskName').value || '测试任务';
+    if (window.AudioLabCurrentTask) {
+        window.AudioLabCurrentTask.set({
+            taskId: job.task_id,
+            taskName,
+            url: taskUrl,
+            updatedAt: Date.now()
+        });
+    }
+    let opened = false;
+    const targetWindow = window.open(taskUrl, getSynthesisTargetWindowName());
+    if (targetWindow) {
+        try { targetWindow.focus(); } catch (e) {}
+        opened = true;
+    }
+    if (!opened) {
+        window.location.href = taskUrl;
+        return;
+    }
+    setTimeout(resetSynthesisButton, 1200);
 }
 
 async function parseErrorMessage(res, fallback) {

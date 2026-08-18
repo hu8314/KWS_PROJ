@@ -17,7 +17,7 @@
             <li><a href="/" class="{% if request.url.path == '/' %}active{% endif %}">任务管理</a></li>
             <li><a href="/datasets" class="{% if request.url.path == '/datasets' %}active{% endif %}">数据集管理</a></li>
             <li><a href="/upload" class="{% if request.url.path == '/upload' %}active{% endif %}">创建任务</a></li>
-            <li id="navCurrentTaskItem" hidden><a href="#" id="navCurrentTask">当前任务</a></li>
+            <li id="navCurrentTaskItem" class="nav-current-task-placeholder" aria-hidden="true"><a href="#" id="navCurrentTask" tabindex="-1">当前任务</a></li>
             <li><a href="/badcases" class="{% if request.url.path == '/badcases' %}active{% endif %}">Badcase管理</a></li>
         </ul>
     </nav>
@@ -105,16 +105,24 @@
 
         function hideCurrentTaskLink() {
             if (!currentTaskLink) return;
-            if (currentTaskItem) currentTaskItem.hidden = true;
+            if (currentTaskItem) {
+                currentTaskItem.classList.add('nav-current-task-placeholder');
+                currentTaskItem.setAttribute('aria-hidden', 'true');
+            }
             currentTaskLink.href = '#';
             currentTaskLink.title = '目前没有任务';
+            currentTaskLink.setAttribute('tabindex', '-1');
         }
 
         function showCurrentTaskLink(currentTask) {
             if (!currentTaskLink) return;
-            if (currentTaskItem) currentTaskItem.hidden = false;
+            if (currentTaskItem) {
+                currentTaskItem.classList.remove('nav-current-task-placeholder');
+                currentTaskItem.removeAttribute('aria-hidden');
+            }
             currentTaskLink.href = currentTask.url;
             currentTaskLink.title = currentTask.taskName ? `当前任务：${currentTask.taskName}` : '当前任务';
+            currentTaskLink.removeAttribute('tabindex');
         }
 
         async function validateCurrentTask(currentTask) {
@@ -132,13 +140,23 @@
         async function syncCurrentTaskLink() {
             const currentTask = readCurrentTask();
             const validationToken = ++currentTaskValidationToken;
-            hideCurrentTaskLink();
-            if (!currentTask || !currentTask.url) return;
+            if (!currentTask || !currentTask.url) {
+                hideCurrentTaskLink();
+                return;
+            }
 
             const isValid = await validateCurrentTask(currentTask);
             if (validationToken !== currentTaskValidationToken) return;
             if (isValid) {
                 showCurrentTaskLink(currentTask);
+            } else {
+                hideCurrentTaskLink();
+            }
+        }
+
+        function handleCurrentTaskStorage(event) {
+            if (!event || event.key === CURRENT_TASK_STORAGE_KEY) {
+                syncCurrentTaskLink();
             }
         }
 
@@ -206,7 +224,7 @@
             requestFocus: requestFocusAliveCurrentTask
         };
 
-        window.addEventListener('storage', syncCurrentTaskLink);
+        window.addEventListener('storage', handleCurrentTaskStorage);
         syncCurrentTaskLink();
     })();
     </script>
